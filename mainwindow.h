@@ -32,8 +32,13 @@ private:
     void connectSignals();
     void startThreads();
     void stopThreads();
+    void requestSafeControllerShutdown();
     void appendLog(const QString &text);
     void applyUiRefreshPeriod();
+    void applyPositionUnitSelection();
+    double currentPulseEquivalent() const;
+    QString currentPositionUnitSuffix() const;
+    QString currentVelocityUnitSuffix() const;
     MotionConfig collectMotionConfig() const;
     void updateSnapshot(const UiSnapshot &snapshot);
 

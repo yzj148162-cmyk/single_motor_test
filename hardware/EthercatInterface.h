@@ -18,6 +18,7 @@ class EthercatInterface
 public:
     bool initializeBoard(QString &errorMessage) const;
     bool closeBoard(QString &errorMessage) const;
+    bool setAxisEquivalent(const MotionConfig &config, QString &errorMessage) const;
     bool stopAxis(const MotionConfig &config, QString &errorMessage) const;
     bool enableAxis(const MotionConfig &config, QString &errorMessage) const;
     bool disableAxis(const MotionConfig &config, QString &errorMessage) const;

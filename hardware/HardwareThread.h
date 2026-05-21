@@ -52,7 +52,7 @@ private:
     bool shouldWakePlannerPeriodically() const;
     void wakePlannerForEvent();
     void processPendingCommands();
-    void handleInitializeBoard();
+    void handleInitializeBoard(const MotionConfig &config);
     void handleCloseBoard();
     void handleEnableAxis(const MotionConfig &config);
     void handleDisableAxis(const MotionConfig &config);

@@ -28,6 +28,16 @@ bool EthercatInterface::closeBoard(QString &errorMessage) const
     return true;
 }
 
+bool EthercatInterface::setAxisEquivalent(const MotionConfig &config, QString &errorMessage) const
+{
+    const short rc = dmc_set_equiv(kCardNo, static_cast<WORD>(config.axis), config.rawPerDeg);
+    if (rc != 0) {
+        errorMessage = QStringLiteral("dmc_set_equiv 失败，rc=%1").arg(rc);
+        return false;
+    }
+    return true;
+}
+
 bool EthercatInterface::stopAxis(const MotionConfig &config, QString &errorMessage) const
 {
     const short rc = dmc_stop(kCardNo, static_cast<WORD>(config.axis), 0);

@@ -22,6 +22,7 @@
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QPushButton>
+#include <QtWidgets/QRadioButton>
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QVBoxLayout>
@@ -68,8 +69,10 @@ public:
     QSpinBox *cspInterpIndexSpin;
     QGroupBox *advancedGroupBox;
     QFormLayout *advancedFormLayout;
-    QLabel *rawPerDegLabel;
-    QDoubleSpinBox *rawPerDegSpin;
+    QLabel *positionUnitLabel;
+    QHBoxLayout *positionUnitLayout;
+    QRadioButton *degreeUnitRadio;
+    QRadioButton *turnUnitRadio;
     QLabel *cspRxpdoPosAddrLabel;
     QSpinBox *cspRxpdoPosAddrSpin;
     QLabel *cspTxpdoStatusAddrLabel;
@@ -300,19 +303,26 @@ public:
         advancedGroupBox->setObjectName("advancedGroupBox");
         advancedFormLayout = new QFormLayout(advancedGroupBox);
         advancedFormLayout->setObjectName("advancedFormLayout");
-        rawPerDegLabel = new QLabel(advancedGroupBox);
-        rawPerDegLabel->setObjectName("rawPerDegLabel");
+        positionUnitLabel = new QLabel(advancedGroupBox);
+        positionUnitLabel->setObjectName("positionUnitLabel");
 
-        advancedFormLayout->setWidget(0, QFormLayout::LabelRole, rawPerDegLabel);
+        advancedFormLayout->setWidget(0, QFormLayout::LabelRole, positionUnitLabel);
 
-        rawPerDegSpin = new QDoubleSpinBox(advancedGroupBox);
-        rawPerDegSpin->setObjectName("rawPerDegSpin");
-        rawPerDegSpin->setMinimum(0.001000000000000);
-        rawPerDegSpin->setMaximum(1000000.000000000000000);
-        rawPerDegSpin->setDecimals(6);
-        rawPerDegSpin->setValue(500.622000000000014);
+        positionUnitLayout = new QHBoxLayout();
+        positionUnitLayout->setObjectName("positionUnitLayout");
+        degreeUnitRadio = new QRadioButton(advancedGroupBox);
+        degreeUnitRadio->setObjectName("degreeUnitRadio");
+        degreeUnitRadio->setChecked(true);
 
-        advancedFormLayout->setWidget(0, QFormLayout::FieldRole, rawPerDegSpin);
+        positionUnitLayout->addWidget(degreeUnitRadio);
+
+        turnUnitRadio = new QRadioButton(advancedGroupBox);
+        turnUnitRadio->setObjectName("turnUnitRadio");
+
+        positionUnitLayout->addWidget(turnUnitRadio);
+
+
+        advancedFormLayout->setLayout(0, QFormLayout::FieldRole, positionUnitLayout);
 
         cspRxpdoPosAddrLabel = new QLabel(advancedGroupBox);
         cspRxpdoPosAddrLabel->setObjectName("cspRxpdoPosAddrLabel");
@@ -548,8 +558,9 @@ public:
         cspInterpPeriodMsSpin->setSuffix(QCoreApplication::translate("MainWindow", " ms", nullptr));
         cspInterpIndexLabel->setText(QCoreApplication::translate("MainWindow", "\346\227\266\351\227\264\345\237\272\346\214\207\346\225\260(0x60C2:02)", nullptr));
         advancedGroupBox->setTitle(QCoreApplication::translate("MainWindow", "\351\253\230\347\272\247\350\256\276\347\275\256", nullptr));
-        rawPerDegLabel->setText(QCoreApplication::translate("MainWindow", "\344\275\215\347\275\256\347\274\251\346\224\276", nullptr));
-        rawPerDegSpin->setSuffix(QCoreApplication::translate("MainWindow", " raw/deg", nullptr));
+        positionUnitLabel->setText(QCoreApplication::translate("MainWindow", "\344\275\215\347\275\256\347\274\251\346\224\276", nullptr));
+        degreeUnitRadio->setText(QCoreApplication::translate("MainWindow", "\347\221\231\346\216\221\345\256\263", nullptr));
+        turnUnitRadio->setText(QCoreApplication::translate("MainWindow", "\351\215\246\345\240\237\346\232\237", nullptr));
         cspRxpdoPosAddrLabel->setText(QCoreApplication::translate("MainWindow", "\347\233\256\346\240\207\344\275\215\347\275\256\345\234\260\345\235\200(RxPDO)", nullptr));
         cspTxpdoStatusAddrLabel->setText(QCoreApplication::translate("MainWindow", "\347\212\266\346\200\201\345\255\227\345\234\260\345\235\200(TxPDO 0x6041)", nullptr));
         cspTxpdoModeAddrLabel->setText(QCoreApplication::translate("MainWindow", "\346\250\241\345\274\217\346\230\276\347\244\272\345\234\260\345\235\200(TxPDO 0x6061)", nullptr));

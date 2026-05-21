@@ -301,30 +301,32 @@
           </property>
           <layout class="QFormLayout" name="advancedFormLayout">
            <item row="0" column="0">
-            <widget class="QLabel" name="rawPerDegLabel">
+            <widget class="QLabel" name="positionUnitLabel">
              <property name="text">
               <string>位置缩放</string>
              </property>
             </widget>
            </item>
            <item row="0" column="1">
-            <widget class="QDoubleSpinBox" name="rawPerDegSpin">
-             <property name="minimum">
-              <double>0.001000000000000</double>
-             </property>
-             <property name="maximum">
-              <double>1000000.000000000000000</double>
-             </property>
-             <property name="decimals">
-              <number>6</number>
-             </property>
-             <property name="value">
-              <double>500.622000000000014</double>
-             </property>
-             <property name="suffix">
-              <string> raw/deg</string>
-             </property>
-            </widget>
+            <layout class="QHBoxLayout" name="positionUnitLayout">
+             <item>
+              <widget class="QRadioButton" name="degreeUnitRadio">
+               <property name="text">
+                <string>瑙掑害</string>
+               </property>
+               <property name="checked">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QRadioButton" name="turnUnitRadio">
+               <property name="text">
+                <string>鍦堟暟</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
            </item>
            <item row="1" column="0">
             <widget class="QLabel" name="cspRxpdoPosAddrLabel">

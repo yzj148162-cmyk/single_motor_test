@@ -197,7 +197,7 @@ void HardwareThread::processPendingCommands()
 
         switch (command.type) {
         case HardwareCommand::Type::InitializeBoard:
-            handleInitializeBoard();
+            handleInitializeBoard(command.config);
             break;
         case HardwareCommand::Type::CloseBoard:
             handleCloseBoard();
@@ -218,11 +218,18 @@ void HardwareThread::processPendingCommands()
     }
 }
 
-void HardwareThread::handleInitializeBoard()
+void HardwareThread::handleInitializeBoard(const MotionConfig &config)
 {
     QString errorMessage;
     if (!ethercat_.initializeBoard(errorMessage)) {
         emit logMessage(QStringLiteral("初始化控制卡失败: %1").arg(errorMessage));
+        return;
+    }
+
+    if (!ethercat_.setAxisEquivalent(config, errorMessage)) {
+        QString closeErrorMessage;
+        ethercat_.closeBoard(closeErrorMessage);
+        emit logMessage(QStringLiteral("涓嬪彂鑴夊啿褰撻噺澶辫触: %1").arg(errorMessage));
         return;
     }
 
