@@ -18,6 +18,7 @@ class EthercatInterface
 public:
     bool initializeBoard(QString &errorMessage) const;
     bool closeBoard(QString &errorMessage) const;
+    bool waitAxisReady(const MotionConfig &config, QString &errorMessage) const;
     bool setAxisEquivalent(const MotionConfig &config, QString &errorMessage) const;
     bool stopAxis(const MotionConfig &config, QString &errorMessage) const;
     bool enableAxis(const MotionConfig &config, QString &errorMessage) const;
@@ -31,6 +32,7 @@ public:
     bool readPvtRunIndex(const MotionConfig &config, quint32 &runIndex, QString &errorMessage) const;
     bool isAxisMotionDone(const MotionConfig &config, bool &done, QString &errorMessage) const;
 
+    bool readActualPositionRaw(const MotionConfig &config, qint32 &actualPosRaw, QString &errorMessage) const;
     bool readFeedback(const MotionConfig &config, FeedbackData &feedback, QString &errorMessage) const;
     bool readStartPositionRaw(const MotionConfig &config, qint32 &startPosRaw, QString &errorMessage) const;
 

@@ -505,13 +505,13 @@ void MainWindow::onStopMotion()
 void MainWindow::onReadPosition()
 {
     if (!boardInitialized_) {
-        appendLog(QStringLiteral("?????????"));
+        appendLog(QStringLiteral("控制卡尚未初始化。"));
         return;
     }
 
     const MotionConfig config = collectMotionConfig();
     hardwareThread_->enqueueCommand({HardwareCommand::Type::ReadActualPosition, config});
-    appendLog(QStringLiteral("UI ????????????axis=%1?").arg(config.axis));
+    appendLog(QStringLiteral("UI 已下发读取实际位置命令，axis=%1。").arg(config.axis));
 }
 
 void MainWindow::onHardwareLog(const QString &message)

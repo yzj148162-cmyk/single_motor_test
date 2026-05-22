@@ -3,9 +3,15 @@
 #include "LTDMC.h"
 #include "hardware/PdoAccess.h"
 
+#include <chrono>
+#include <cmath>
+#include <thread>
+
 namespace {
 constexpr WORD kCardNo = 0;
 constexpr qsizetype kMaxPvtTablePoints = 5000;
+constexpr auto kAxisReadyPollInterval = std::chrono::milliseconds(10);
+constexpr int kAxisReadyPollCount = 50;
 }
 
 bool EthercatInterface::initializeBoard(QString &errorMessage) const
@@ -26,6 +32,30 @@ bool EthercatInterface::closeBoard(QString &errorMessage) const
         return false;
     }
     return true;
+}
+
+bool EthercatInterface::waitAxisReady(const MotionConfig &config, QString &errorMessage) const
+{
+    short lastRc = 0;
+    DWORD totalAxes = 0;
+
+    for (int i = 0; i < kAxisReadyPollCount; ++i) {
+        totalAxes = 0;
+        lastRc = nmc_get_total_axes(kCardNo, &totalAxes);
+        if (lastRc == 0 && totalAxes > static_cast<DWORD>(config.axis)) {
+            return true;
+        }
+        std::this_thread::sleep_for(kAxisReadyPollInterval);
+    }
+
+    if (lastRc != 0) {
+        errorMessage = QStringLiteral("nmc_get_total_axes 失败，rc=%1").arg(lastRc);
+    } else {
+        errorMessage = QStringLiteral("总线轴尚未就绪，当前轴数=%1，目标轴=%2")
+                           .arg(totalAxes)
+                           .arg(config.axis);
+    }
+    return false;
 }
 
 bool EthercatInterface::setAxisEquivalent(const MotionConfig &config, QString &errorMessage) const
@@ -114,7 +144,7 @@ bool EthercatInterface::startPvtsMotion(const MotionConfig &config,
         return false;
     }
     if (trajectory.size() > kMaxPvtTablePoints) {
-        errorMessage = QStringLiteral("PVTS 轨迹点数超限：count=%1，控制卡上限=%2。")
+        errorMessage = QStringLiteral("PVTS 轨迹点数超限，count=%1，控制卡上限=%2。")
                            .arg(trajectory.size())
                            .arg(kMaxPvtTablePoints);
         return false;
@@ -129,7 +159,7 @@ bool EthercatInterface::startPvtsMotion(const MotionConfig &config,
     const qint32 firstPosRaw = trajectory.first().targetPosRaw;
 
     for (const TrajectoryPoint &point : trajectory) {
-        // 手册要求 PVTS 表中的时间和位置都以首点为参考。
+        // PVTS 每一段都要以首点为参考，局部时间和局部位置都从 0 开始。
         timeS.push_back(point.timeS - firstTimeS);
         posUnit.push_back(static_cast<double>(point.targetPosRaw - firstPosRaw) / config.rawPerDeg);
     }
@@ -188,6 +218,21 @@ bool EthercatInterface::isAxisMotionDone(const MotionConfig &config, bool &done,
     return true;
 }
 
+bool EthercatInterface::readActualPositionRaw(const MotionConfig &config,
+                                              qint32 &actualPosRaw,
+                                              QString &errorMessage) const
+{
+    double encoderUnit = 0.0;
+    const short rc = dmc_get_encoder_unit(kCardNo, static_cast<WORD>(config.axis), &encoderUnit);
+    if (rc != 0) {
+        errorMessage = QStringLiteral("dmc_get_encoder_unit 失败，rc=%1").arg(rc);
+        return false;
+    }
+
+    actualPosRaw = static_cast<qint32>(std::llround(encoderUnit * config.rawPerDeg));
+    return true;
+}
+
 bool EthercatInterface::readFeedback(const MotionConfig &config, FeedbackData &feedback, QString &errorMessage) const
 {
     if (config.mode == MotionMode::CSP) {
@@ -197,21 +242,21 @@ bool EthercatInterface::readFeedback(const MotionConfig &config, FeedbackData &f
         const short rcStatus =
             nmc_read_txpdo_extra_short(kCardNo, config.ecatPort, access.txStatusAddr, 1, &statusValue);
         if (rcStatus != 0) {
-            errorMessage = QStringLiteral("读 0x6041 失败，rc=%1").arg(rcStatus);
+            errorMessage = QStringLiteral("读取 0x6041 失败，rc=%1").arg(rcStatus);
             return false;
         }
 
         int modeRaw = 0;
         const short rcMode = nmc_read_txpdo_extra(kCardNo, config.ecatPort, access.txModeAddr, 1, &modeRaw);
         if (rcMode != 0) {
-            errorMessage = QStringLiteral("读 0x6061 失败，rc=%1").arg(rcMode);
+            errorMessage = QStringLiteral("读取 0x6061 失败，rc=%1").arg(rcMode);
             return false;
         }
 
         int posRaw = 0;
         const short rcPos = nmc_read_txpdo_extra(kCardNo, config.ecatPort, access.txActualPosAddr, 2, &posRaw);
         if (rcPos != 0) {
-            errorMessage = QStringLiteral("读 0x6064 失败，rc=%1").arg(rcPos);
+            errorMessage = QStringLiteral("读取 0x6064 失败，rc=%1").arg(rcPos);
             return false;
         }
 
@@ -223,14 +268,10 @@ bool EthercatInterface::readFeedback(const MotionConfig &config, FeedbackData &f
         return true;
     }
 
-    double posDeg = 0.0;
-    const short rc = dmc_get_position_unit(kCardNo, static_cast<WORD>(config.axis), &posDeg);
-    if (rc != 0) {
-        errorMessage = QStringLiteral("读 PVT 当前位置失败，rc=%1").arg(rc);
+    if (!readActualPositionRaw(config, feedback.actualPosRaw, errorMessage)) {
         return false;
     }
 
-    feedback.actualPosRaw = qRound(posDeg * config.rawPerDeg);
     feedback.errorRaw = feedback.targetPosRaw - feedback.actualPosRaw;
     feedback.modeDisplay = 0;
     feedback.statusWord = 0;

@@ -1,4 +1,4 @@
-#include "hardware/HardwareThread.h"
+﻿#include "hardware/HardwareThread.h"
 
 #include <algorithm>
 #include <QMutexLocker>
@@ -271,10 +271,12 @@ void HardwareThread::run()
                 }
             }
 
-            QString errorMessage;
-            if (!ethercat_.readFeedback(activeConfig_, feedback, errorMessage)) {
-                emit logMessage(QStringLiteral("硬件线程读取反馈失败: %1").arg(errorMessage));
-                feedback.fault = true;
+            if (motionActive_) {
+                QString errorMessage;
+                if (!ethercat_.readFeedback(activeConfig_, feedback, errorMessage)) {
+                    emit logMessage(QStringLiteral("硬件线程读取反馈失败: %1").arg(errorMessage));
+                    feedback.fault = true;
+                }
             }
             feedback.motionRunning = motionActive_;
             feedback.boardInitialized = boardInitialized_;
@@ -339,10 +341,17 @@ void HardwareThread::handleInitializeBoard(const MotionConfig &config)
         return;
     }
 
+    if (!ethercat_.waitAxisReady(config, errorMessage)) {
+        QString closeErrorMessage;
+        ethercat_.closeBoard(closeErrorMessage);
+        emit logMessage(QStringLiteral("控制卡初始化后轴未就绪: %1").arg(errorMessage));
+        return;
+    }
+
     if (!ethercat_.setAxisEquivalent(config, errorMessage)) {
         QString closeErrorMessage;
         ethercat_.closeBoard(closeErrorMessage);
-        emit logMessage(QStringLiteral("涓嬪彂鑴夊啿褰撻噺澶辫触: %1").arg(errorMessage));
+        emit logMessage(QStringLiteral("下发脉冲当量失败: %1").arg(errorMessage));
         return;
     }
 
@@ -415,37 +424,6 @@ void HardwareThread::handleDisableAxis(const MotionConfig &config)
     emit logMessage(QStringLiteral("轴 %1 已通过雷赛库函数失能。").arg(config.axis));
 }
 
-/* void HardwareThread::handleReadActualPosition(const MotionConfig &config)
-{
-    if (!boardInitialized_) {
-        emit logMessage(QStringLiteral("璇诲彇瀹為檯浣嶇疆鍓嶈鍏堝垵濮嬪寲鎺у埗鍗°€?));
-        return;
-    }
-
-    if (!motionActive_) {
-        activeConfig_ = config;
-    }
-
-    FeedbackData feedback;
-    {
-        QMutexLocker locker(&sharedContext_.feedbackMutex);
-        feedback = sharedContext_.feedback;
-    }
-
-    QString errorMessage;
-    if (!ethercat_.readFeedback(config, feedback, errorMessage)) {
-        emit logMessage(QStringLiteral("璇诲彇瀹為檯浣嶇疆澶辫触: %1").arg(errorMessage));
-        return;
-    }
-
-    feedback.boardInitialized = boardInitialized_;
-    feedback.motionRunning = motionActive_;
-    publishFeedback(feedback);
-    emit logMessage(QStringLiteral("宸茶鍙栧綋鍓嶅疄闄呬綅缃紝axis=%1銆?).arg(config.axis));
-}
-
-*/
-
 void HardwareThread::handleReadActualPosition(const MotionConfig &config)
 {
     if (!boardInitialized_) {
@@ -464,11 +442,14 @@ void HardwareThread::handleReadActualPosition(const MotionConfig &config)
     }
 
     QString errorMessage;
-    if (!ethercat_.readFeedback(config, feedback, errorMessage)) {
+    qint32 actualPosRaw = feedback.actualPosRaw;
+    if (!ethercat_.readActualPositionRaw(config, actualPosRaw, errorMessage)) {
         emit logMessage(QStringLiteral("读取实际位置失败: %1").arg(errorMessage));
         return;
     }
 
+    feedback.actualPosRaw = actualPosRaw;
+    feedback.errorRaw = feedback.targetPosRaw - feedback.actualPosRaw;
     feedback.boardInitialized = boardInitialized_;
     feedback.motionRunning = motionActive_;
     publishFeedback(feedback);

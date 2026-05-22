@@ -1,0 +1,12 @@
+{
+  "language": "cpp",
+  "encoding": "utf8bom",
+  "auto_format": true,
+  "style": {
+    "indent": 4,
+    "braces": "k&r",
+    "spaces_around_operators": true
+  },
+  "enable_snippets": true,
+  "use_project_includes": true
+}
