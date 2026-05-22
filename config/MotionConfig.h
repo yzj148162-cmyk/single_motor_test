@@ -29,6 +29,8 @@ enum class PlannerWakePolicy {
     PeriodicWithBuffer
 };
 
+inline constexpr qsizetype kMaxPvtsTablePoints = 5000;
+
 inline QString motionModeToString(MotionMode mode)
 {
     return mode == MotionMode::CSP ? QStringLiteral("CSP") : QStringLiteral("PVT");

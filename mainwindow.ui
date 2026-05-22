@@ -437,7 +437,7 @@
            <item row="2" column="0">
             <widget class="QPushButton" name="readPosButton">
              <property name="text">
-              <string>读取粗粒度位置</string>
+              <string>读取实际位置</string>
              </property>
             </widget>
            </item>

@@ -19,6 +19,7 @@ struct HardwareCommand
         CloseBoard,
         EnableAxis,
         DisableAxis,
+        ReadActualPosition,
         StartMotion,
         StopMotion
     };
@@ -56,9 +57,14 @@ private:
     void handleCloseBoard();
     void handleEnableAxis(const MotionConfig &config);
     void handleDisableAxis(const MotionConfig &config);
+    void handleReadActualPosition(const MotionConfig &config);
     void handleStartMotion(const MotionConfig &config);
     void handleStopMotion();
     void publishFeedback(const FeedbackData &feedback);
+    void clearPvtMotionState();
+    bool startPvtSegment(qsizetype segmentIndex, QString &errorMessage);
+    qint64 uniquePointCountForPvtSegment(qsizetype segmentIndex) const;
+    qint64 totalPvtUniquePointCount() const;
 
 private:
     SharedContext &sharedContext_;
@@ -73,6 +79,8 @@ private:
     bool motionActive_ = false;
     TrajectoryPoint lastPoint_;
     QVector<TrajectoryPoint> activePvtTrajectory_;
+    QVector<PvtTrajectorySegment> activePvtSegments_;
+    qsizetype activePvtSegmentIndex_ = -1;
 };
 
 #endif // HARDWARETHREAD_H

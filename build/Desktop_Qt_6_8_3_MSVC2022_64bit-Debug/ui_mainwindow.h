@@ -570,7 +570,7 @@ public:
         closeCardButton->setText(QCoreApplication::translate("MainWindow", "\345\205\263\351\227\255\346\216\247\345\210\266\345\215\241", nullptr));
         enableAxisButton->setText(QCoreApplication::translate("MainWindow", "\350\275\264\344\275\277\350\203\275", nullptr));
         disableAxisButton->setText(QCoreApplication::translate("MainWindow", "\350\275\264\345\244\261\350\203\275", nullptr));
-        readPosButton->setText(QCoreApplication::translate("MainWindow", "\350\257\273\345\217\226\347\262\227\347\262\222\345\272\246\344\275\215\347\275\256", nullptr));
+        readPosButton->setText(QCoreApplication::translate("MainWindow", "\350\257\273\345\217\226\345\256\236\351\231\205\344\275\215\347\275\256", nullptr));
         stopButton->setText(QCoreApplication::translate("MainWindow", "\345\201\234\346\255\242\350\275\250\350\277\271", nullptr));
         startButton->setText(QCoreApplication::translate("MainWindow", "\345\274\200\345\247\213\350\275\250\350\277\271", nullptr));
         statusBox->setTitle(QCoreApplication::translate("MainWindow", "\347\212\266\346\200\201", nullptr));

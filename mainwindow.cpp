@@ -23,6 +23,8 @@ constexpr int kMinUiRefreshMs = 10;
 constexpr int kMaxUiRefreshMs = 500;
 constexpr double kPulseEquivalentPerDegree = 500.622;
 constexpr double kPulseEquivalentPerTurn = 180224.0;
+constexpr double kErrorPlotMinHalfRangeDeg = 0.001;
+constexpr int kErrorPlotDecimals = 3;
 constexpr auto kShutdownSafetyTimeout = std::chrono::seconds(2);
 
 double rawToDisplayUnit(qint32 rawValue, double pulsePerUnit)
@@ -33,12 +35,11 @@ double rawToDisplayUnit(qint32 rawValue, double pulsePerUnit)
     return static_cast<double>(rawValue) / pulsePerUnit;
 }
 
-qint64 estimatePvtPointCount(double durationS, qint32 planningPeriodMs)
+double rawToDegree(qint32 rawValue)
 {
-    const double durationMs = std::max(1.0, durationS * 1000.0);
-    const int safePeriodMs = std::max(1, planningPeriodMs);
-    return std::max<qint64>(2, static_cast<qint64>(std::ceil(durationMs / safePeriodMs)) + 1);
+    return rawToDisplayUnit(rawValue, kPulseEquivalentPerDegree);
 }
+
 }
 
 class ErrorPlotWidget : public QWidget
@@ -112,10 +113,10 @@ protected:
         }
 
         if (std::fabs(yMax - yMin) < kEps) {
-            yMin -= 1.0;
-            yMax += 1.0;
+            yMin -= kErrorPlotMinHalfRangeDeg;
+            yMax += kErrorPlotMinHalfRangeDeg;
         } else {
-            const double pad = 0.15 * (yMax - yMin);
+            const double pad = std::max(0.15 * (yMax - yMin), kErrorPlotMinHalfRangeDeg);
             yMin -= pad;
             yMax += pad;
         }
@@ -127,7 +128,7 @@ protected:
                            plotRect.bottom() - yRatio * plotRect.height());
         };
 
-        painter.setPen(QPen(QColor(210, 210, 210), 1.0, Qt::DashLine));
+        painter.setPen(QPen(QColor(34, 139, 34), 1.0, Qt::DashLine));
         painter.drawLine(mapPoint(QPointF(xMin, 0.0)), mapPoint(QPointF(xMax, 0.0)));
 
         QPainterPath path;
@@ -152,10 +153,10 @@ protected:
         painter.setPen(Qt::black);
         painter.drawText(QRectF(5, plotRect.top() - 8, 45, 20),
                          Qt::AlignRight | Qt::AlignVCenter,
-                         QString::number(yMax, 'f', 1));
+                         QString::number(yMax, 'f', kErrorPlotDecimals));
         painter.drawText(QRectF(5, plotRect.bottom() - 10, 45, 20),
                          Qt::AlignRight | Qt::AlignVCenter,
-                         QString::number(yMin, 'f', 1));
+                         QString::number(yMin, 'f', kErrorPlotDecimals));
         painter.drawText(QRectF(plotRect.left(), plotRect.bottom() + 5, 80, 20),
                          Qt::AlignLeft | Qt::AlignTop,
                          QString::number(xMin, 'f', 2) + QStringLiteral(" s"));
@@ -339,7 +340,7 @@ void MainWindow::applyPositionUnitSelection()
     ui_->positionLabel->setText(QStringLiteral("--") + positionUnitSuffix);
     ui_->errorLabel->setText(QStringLiteral("当前位置误差: --%1").arg(positionUnitSuffix));
     if (errorPlot_ != nullptr) {
-        errorPlot_->setUnitSuffix(positionUnitSuffix);
+        errorPlot_->setUnitSuffix(QStringLiteral(" deg"));
     }
 }
 
@@ -386,6 +387,7 @@ void MainWindow::updateSnapshot(const UiSnapshot &snapshot)
     const QString positionUnitSuffix = currentPositionUnitSuffix();
     const double actualPosDisplay = rawToDisplayUnit(snapshot.feedback.actualPosRaw, pulsePerUnit);
     const double errorDisplay = rawToDisplayUnit(snapshot.feedback.errorRaw, pulsePerUnit);
+    const double errorDisplayDeg = rawToDegree(snapshot.feedback.errorRaw);
 
     ui_->connectionLabel->setText(snapshot.feedback.boardInitialized ? QStringLiteral("已初始化")
                                                                      : QStringLiteral("未初始化"));
@@ -405,7 +407,7 @@ void MainWindow::updateSnapshot(const UiSnapshot &snapshot)
         const bool appendTerminalPoint = curveCaptureActive_ && !snapshot.feedback.motionRunning && lastMotionRunning_
                                       && snapshot.feedback.motionTimeS > 0.0;
         if (appendDuringMotion || appendTerminalPoint) {
-            errorPlot_->appendSample(snapshot.feedback.motionTimeS, errorDisplay);
+            errorPlot_->appendSample(snapshot.feedback.motionTimeS, errorDisplayDeg);
         }
     }
 
@@ -465,15 +467,6 @@ void MainWindow::onStartMotion()
         appendLog(QStringLiteral("参数非法：系统规划周期必须大于 0，且不能超过总时长。"));
         return;
     }
-    if (config.mode == MotionMode::PVT) {
-        const qint64 pvtPointCount = estimatePvtPointCount(config.durationS, config.systemPlanningPeriodMs);
-        if (pvtPointCount > 5000) {
-            appendLog(QStringLiteral("参数非法：PVT 预计生成 %1 个点，已超过控制卡 5000 点上限。")
-                          .arg(pvtPointCount));
-            return;
-        }
-    }
-
     {
         QMutexLocker locker(&sharedContext_.requestMutex);
         sharedContext_.motionRequest.config = config;
@@ -512,28 +505,13 @@ void MainWindow::onStopMotion()
 void MainWindow::onReadPosition()
 {
     if (!boardInitialized_) {
-        appendLog(QStringLiteral("控制卡尚未初始化。"));
+        appendLog(QStringLiteral("?????????"));
         return;
     }
 
-    UiSnapshot snapshot;
-    {
-        QMutexLocker locker(&sharedContext_.feedbackMutex);
-        snapshot.feedback = sharedContext_.feedback;
-    }
-
-    const double pulsePerUnit = currentPulseEquivalent();
-    const QString positionUnitSuffix = currentPositionUnitSuffix();
-    const double actualValue = rawToDisplayUnit(snapshot.feedback.actualPosRaw, pulsePerUnit);
-    const double targetValue = rawToDisplayUnit(snapshot.feedback.targetPosRaw, pulsePerUnit);
-
-    appendLog(QStringLiteral("当前位置快照: actual=%1%2, target=%3%4, status=0x%5, modeDisplay=%6")
-                  .arg(QString::number(actualValue, 'f', 4))
-                  .arg(positionUnitSuffix)
-                  .arg(QString::number(targetValue, 'f', 4))
-                  .arg(positionUnitSuffix)
-                  .arg(snapshot.feedback.statusWord, 4, 16, QChar('0'))
-                  .arg(snapshot.feedback.modeDisplay));
+    const MotionConfig config = collectMotionConfig();
+    hardwareThread_->enqueueCommand({HardwareCommand::Type::ReadActualPosition, config});
+    appendLog(QStringLiteral("UI ????????????axis=%1?").arg(config.axis));
 }
 
 void MainWindow::onHardwareLog(const QString &message)

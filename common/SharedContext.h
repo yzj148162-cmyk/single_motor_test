@@ -8,6 +8,7 @@
 
 #include "common/FeedbackData.h"
 #include "common/MotionRequest.h"
+#include "common/PvtTrajectorySegment.h"
 #include "common/ThreadSafeQueue.h"
 #include "common/TrajectoryPoint.h"
 
@@ -27,6 +28,7 @@ struct SharedContext
     // 例如当前的 PVT(PVTS) 会在启动前一次性把完整精细轨迹准备到这里。
     QMutex plannedTrajectoryMutex;
     QVector<TrajectoryPoint> plannedTrajectory;
+    QVector<PvtTrajectorySegment> plannedPvtSegments;
 
     // 实时控制量型输出槽位。
     // 当前代码尚未真正使用，但先把共享位置预留出来，方便后续扩展阻抗、力分配等在线控制量。

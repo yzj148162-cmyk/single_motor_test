@@ -1,8 +1,36 @@
 #include "planner/PlannerThread.h"
 
+#include <algorithm>
 #include <QMutexLocker>
 
 #include "planner/QuinticPlanner.h"
+
+namespace {
+QVector<PvtTrajectorySegment> splitPvtTrajectory(const QVector<TrajectoryPoint> &trajectory)
+{
+    QVector<PvtTrajectorySegment> segments;
+    if (trajectory.size() < 2) {
+        return segments;
+    }
+
+    qsizetype startIndex = 0;
+    while (startIndex < trajectory.size()) {
+        const qsizetype endIndex = std::min(startIndex + kMaxPvtsTablePoints,
+                                            static_cast<qsizetype>(trajectory.size()));
+        PvtTrajectorySegment segment;
+        segment.points = trajectory.mid(startIndex, endIndex - startIndex);
+        segment.firstPointIndex = startIndex;
+        segments.push_back(segment);
+
+        if (endIndex >= trajectory.size()) {
+            break;
+        }
+        startIndex = endIndex - 1;
+    }
+
+    return segments;
+}
+}
 
 PlannerThread::PlannerThread(SharedContext &sharedContext, const SystemConfig &systemConfig, QObject *parent)
     : QThread(parent)
@@ -17,6 +45,7 @@ void PlannerThread::clearPlannerOutputs()
     {
         QMutexLocker locker(&sharedContext_.plannedTrajectoryMutex);
         sharedContext_.plannedTrajectory.clear();
+        sharedContext_.plannedPvtSegments.clear();
     }
     {
         QMutexLocker locker(&sharedContext_.latestCommandMutex);
@@ -37,8 +66,18 @@ void PlannerThread::prepareOutputsForNewRequest(const MotionRequest &request, qi
     {
         QMutexLocker locker(&sharedContext_.plannedTrajectoryMutex);
         sharedContext_.plannedTrajectory = planner_->fullTrajectory();
+        sharedContext_.plannedPvtSegments.clear();
+        if (request.config.mode == MotionMode::PVT) {
+            sharedContext_.plannedPvtSegments = splitPvtTrajectory(sharedContext_.plannedTrajectory);
+        }
     }
     sharedContext_.plannedTrajectoryReady.storeRelease(1);
+
+    if (request.config.mode == MotionMode::PVT) {
+        emit logMessage(QStringLiteral("PVT 轨迹切分完成：总点数=%1，分段数=%2。")
+                            .arg(sharedContext_.plannedTrajectory.size())
+                            .arg(sharedContext_.plannedPvtSegments.size()));
+    }
 
     {
         QMutexLocker locker(&sharedContext_.requestMutex);

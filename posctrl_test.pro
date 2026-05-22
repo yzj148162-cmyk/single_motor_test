@@ -20,6 +20,7 @@ SOURCES += \
 HEADERS += \
     common/FeedbackData.h \
     common/MotionRequest.h \
+    common/PvtTrajectorySegment.h \
     common/SharedContext.h \
     common/ThreadSafeQueue.h \
     common/TrajectoryPoint.h \

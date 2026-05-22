@@ -1,5 +1,6 @@
 #include "hardware/HardwareThread.h"
 
+#include <algorithm>
 #include <QMutexLocker>
 
 #include <chrono>
@@ -9,6 +10,7 @@ namespace {
 constexpr auto kWarmupDelay = std::chrono::milliseconds(20);
 constexpr auto kPrimePollInterval = std::chrono::milliseconds(1);
 constexpr auto kPrimeTimeout = std::chrono::milliseconds(500);
+constexpr int kLogTimeDecimals = 4;
 }
 
 HardwareThread::HardwareThread(SharedContext &sharedContext, const SystemConfig &systemConfig, QObject *parent)
@@ -61,6 +63,81 @@ void HardwareThread::enqueueCommand(const HardwareCommand &command)
 {
     QMutexLocker locker(&commandMutex_);
     commands_.enqueue(command);
+}
+
+void HardwareThread::clearPvtMotionState()
+{
+    activePvtTrajectory_.clear();
+    activePvtSegments_.clear();
+    activePvtSegmentIndex_ = -1;
+}
+
+qint64 HardwareThread::uniquePointCountForPvtSegment(qsizetype segmentIndex) const
+{
+    if (segmentIndex < 0 || segmentIndex >= activePvtSegments_.size()) {
+        return 0;
+    }
+
+    const qint64 pointCount = activePvtSegments_.at(segmentIndex).points.size();
+    if (pointCount <= 0) {
+        return 0;
+    }
+    return segmentIndex == 0 ? pointCount : std::max<qint64>(0, pointCount - 1);
+}
+
+qint64 HardwareThread::totalPvtUniquePointCount() const
+{
+    qint64 totalPointCount = 0;
+    for (qsizetype i = 0; i < activePvtSegments_.size(); ++i) {
+        totalPointCount += uniquePointCountForPvtSegment(i);
+    }
+    return totalPointCount;
+}
+
+bool HardwareThread::startPvtSegment(qsizetype segmentIndex, QString &errorMessage)
+{
+    if (segmentIndex < 0 || segmentIndex >= activePvtSegments_.size()) {
+        errorMessage = QStringLiteral("PVT 分段索引越界。");
+        return false;
+    }
+
+    const QVector<TrajectoryPoint> &segment = activePvtSegments_.at(segmentIndex).points;
+    if (segment.size() < 2) {
+        errorMessage = QStringLiteral("PVT 分段点数不足。");
+        return false;
+    }
+
+    if (!ethercat_.startPvtsMotion(activeConfig_, segment, errorMessage)) {
+        return false;
+    }
+
+    activePvtTrajectory_ = segment;
+    activePvtSegmentIndex_ = segmentIndex;
+    if (segmentIndex == 0) {
+        sharedContext_.sentPointCount.storeRelease(uniquePointCountForPvtSegment(segmentIndex));
+    } else {
+        sharedContext_.sentPointCount.fetchAndAddRelaxed(uniquePointCountForPvtSegment(segmentIndex));
+    }
+
+    const PvtTrajectorySegment &segmentInfo = activePvtSegments_.at(segmentIndex);
+    const qint64 cumulativePointCount = sharedContext_.sentPointCount.loadAcquire();
+    const qint64 totalPointCount = totalPvtUniquePointCount();
+    const qsizetype firstPointIndex = segmentInfo.firstPointIndex;
+    const qsizetype lastPointIndex = firstPointIndex + segment.size() - 1;
+    emit logMessage(
+        QStringLiteral("PVT 分段已装载并启动：第 %1/%2 段，段点数=%3，新增点数=%4，累计点数=%5/%6，全局点=%7~%8，时间=%9s~%10s。")
+            .arg(segmentIndex + 1)
+            .arg(activePvtSegments_.size())
+            .arg(segment.size())
+            .arg(uniquePointCountForPvtSegment(segmentIndex))
+            .arg(cumulativePointCount)
+            .arg(totalPointCount)
+            .arg(firstPointIndex)
+            .arg(lastPointIndex)
+            .arg(QString::number(segment.first().timeS, 'f', kLogTimeDecimals))
+            .arg(QString::number(segment.last().timeS, 'f', kLogTimeDecimals)));
+
+    return true;
 }
 
 void HardwareThread::run()
@@ -127,10 +204,15 @@ void HardwareThread::run()
                     QString errorMessage;
                     quint32 runIndex = 0;
                     if (ethercat_.readPvtRunIndex(activeConfig_, runIndex, errorMessage)
-                        && !activePvtTrajectory_.isEmpty()) {
-                        const qsizetype safeIndex = std::min<qsizetype>(runIndex, activePvtTrajectory_.size() - 1);
-                        feedback.targetPosRaw = activePvtTrajectory_.at(safeIndex).targetPosRaw;
-                        feedback.motionTimeS = activePvtTrajectory_.at(safeIndex).timeS;
+                        && activePvtSegmentIndex_ >= 0
+                        && activePvtSegmentIndex_ < activePvtSegments_.size()) {
+                        const QVector<TrajectoryPoint> &segment =
+                            activePvtSegments_.at(activePvtSegmentIndex_).points;
+                        if (!segment.isEmpty()) {
+                            const qsizetype safeIndex = std::min<qsizetype>(runIndex, segment.size() - 1);
+                            feedback.targetPosRaw = segment.at(safeIndex).targetPosRaw;
+                            feedback.motionTimeS = segment.at(safeIndex).timeS;
+                        }
                     }
 
                     bool done = false;
@@ -138,6 +220,30 @@ void HardwareThread::run()
                         emit logMessage(QStringLiteral("读取 PVT 运行状态失败: %1").arg(errorMessage));
                         feedback.fault = true;
                         motionActive_ = false;
+                    } else if (done
+                               && activePvtSegmentIndex_ >= 0
+                               && activePvtSegmentIndex_ + 1 < activePvtSegments_.size()) {
+                        const QVector<TrajectoryPoint> finishedSegment =
+                            activePvtSegments_.at(activePvtSegmentIndex_).points;
+                        if (!finishedSegment.isEmpty()) {
+                            feedback.targetPosRaw = finishedSegment.last().targetPosRaw;
+                            feedback.motionTimeS = finishedSegment.last().timeS;
+                        } else {
+                            feedback.motionTimeS = activeConfig_.durationS;
+                        }
+
+                        const qsizetype nextSegmentIndex = activePvtSegmentIndex_ + 1;
+                        emit logMessage(QStringLiteral("PVT 第 %1/%2 段执行完成，准备切换到第 %3 段。")
+                                            .arg(activePvtSegmentIndex_ + 1)
+                                            .arg(activePvtSegments_.size())
+                                            .arg(nextSegmentIndex + 1));
+                        if (!startPvtSegment(nextSegmentIndex, errorMessage)) {
+                            emit logMessage(QStringLiteral("PVT 下一段装表失败: %1").arg(errorMessage));
+                            feedback.fault = true;
+                            motionActive_ = false;
+                        } else {
+                            feedback.motionRunning = true;
+                        }
                     } else if (done) {
                         motionActive_ = false;
                         {
@@ -156,7 +262,9 @@ void HardwareThread::run()
                             feedback.motionTimeS = activeConfig_.durationS;
                         }
                         feedback.motionRunning = false;
-                        emit logMessage(QStringLiteral("PVTS 轨迹已执行完成，硬件线程自动结束本次运动。"));
+                        emit logMessage(QStringLiteral("PVTS 轨迹已执行完成：共 %1 段，累计点数=%2。")
+                                            .arg(activePvtSegments_.size())
+                                            .arg(totalPvtUniquePointCount()));
                     } else {
                         feedback.motionRunning = true;
                     }
@@ -208,6 +316,9 @@ void HardwareThread::processPendingCommands()
         case HardwareCommand::Type::DisableAxis:
             handleDisableAxis(command.config);
             break;
+        case HardwareCommand::Type::ReadActualPosition:
+            handleReadActualPosition(command.config);
+            break;
         case HardwareCommand::Type::StartMotion:
             handleStartMotion(command.config);
             break;
@@ -220,6 +331,8 @@ void HardwareThread::processPendingCommands()
 
 void HardwareThread::handleInitializeBoard(const MotionConfig &config)
 {
+    activeConfig_ = config;
+
     QString errorMessage;
     if (!ethercat_.initializeBoard(errorMessage)) {
         emit logMessage(QStringLiteral("初始化控制卡失败: %1").arg(errorMessage));
@@ -233,6 +346,7 @@ void HardwareThread::handleInitializeBoard(const MotionConfig &config)
         return;
     }
 
+    activeConfig_ = config;
     boardInitialized_ = true;
     {
         QMutexLocker locker(&sharedContext_.feedbackMutex);
@@ -271,6 +385,7 @@ void HardwareThread::handleEnableAxis(const MotionConfig &config)
     }
 
     QString errorMessage;
+    activeConfig_ = config;
     if (!ethercat_.enableAxis(config, errorMessage)) {
         emit logMessage(QStringLiteral("轴使能失败: %1").arg(errorMessage));
         return;
@@ -286,6 +401,7 @@ void HardwareThread::handleDisableAxis(const MotionConfig &config)
         return;
     }
 
+    activeConfig_ = config;
     if (motionActive_) {
         handleStopMotion();
     }
@@ -299,6 +415,66 @@ void HardwareThread::handleDisableAxis(const MotionConfig &config)
     emit logMessage(QStringLiteral("轴 %1 已通过雷赛库函数失能。").arg(config.axis));
 }
 
+/* void HardwareThread::handleReadActualPosition(const MotionConfig &config)
+{
+    if (!boardInitialized_) {
+        emit logMessage(QStringLiteral("璇诲彇瀹為檯浣嶇疆鍓嶈鍏堝垵濮嬪寲鎺у埗鍗°€?));
+        return;
+    }
+
+    if (!motionActive_) {
+        activeConfig_ = config;
+    }
+
+    FeedbackData feedback;
+    {
+        QMutexLocker locker(&sharedContext_.feedbackMutex);
+        feedback = sharedContext_.feedback;
+    }
+
+    QString errorMessage;
+    if (!ethercat_.readFeedback(config, feedback, errorMessage)) {
+        emit logMessage(QStringLiteral("璇诲彇瀹為檯浣嶇疆澶辫触: %1").arg(errorMessage));
+        return;
+    }
+
+    feedback.boardInitialized = boardInitialized_;
+    feedback.motionRunning = motionActive_;
+    publishFeedback(feedback);
+    emit logMessage(QStringLiteral("宸茶鍙栧綋鍓嶅疄闄呬綅缃紝axis=%1銆?).arg(config.axis));
+}
+
+*/
+
+void HardwareThread::handleReadActualPosition(const MotionConfig &config)
+{
+    if (!boardInitialized_) {
+        emit logMessage(QStringLiteral("读取实际位置前请先初始化控制卡。"));
+        return;
+    }
+
+    if (!motionActive_) {
+        activeConfig_ = config;
+    }
+
+    FeedbackData feedback;
+    {
+        QMutexLocker locker(&sharedContext_.feedbackMutex);
+        feedback = sharedContext_.feedback;
+    }
+
+    QString errorMessage;
+    if (!ethercat_.readFeedback(config, feedback, errorMessage)) {
+        emit logMessage(QStringLiteral("读取实际位置失败: %1").arg(errorMessage));
+        return;
+    }
+
+    feedback.boardInitialized = boardInitialized_;
+    feedback.motionRunning = motionActive_;
+    publishFeedback(feedback);
+    emit logMessage(QStringLiteral("已读取当前实际位置，axis=%1。").arg(config.axis));
+}
+
 void HardwareThread::handleStartMotion(const MotionConfig &config)
 {
     if (!boardInitialized_) {
@@ -309,7 +485,7 @@ void HardwareThread::handleStartMotion(const MotionConfig &config)
     activeConfig_ = config;
     motionActive_ = false;
     lastPoint_ = {};
-    activePvtTrajectory_.clear();
+    clearPvtMotionState();
     if (config.mode == MotionMode::CSP) {
         // 新的队列供货型任务启动前先清掉存量旧点，
         // 避免硬件线程把上一轮残留误认为“本次首批点已经到位”。
@@ -318,6 +494,7 @@ void HardwareThread::handleStartMotion(const MotionConfig &config)
     {
         QMutexLocker locker(&sharedContext_.plannedTrajectoryMutex);
         sharedContext_.plannedTrajectory.clear();
+        sharedContext_.plannedPvtSegments.clear();
     }
     sharedContext_.plannedTrajectoryReady.storeRelease(0);
     sharedContext_.latestCommandReady.storeRelease(0);
@@ -390,17 +567,16 @@ void HardwareThread::handleStartMotion(const MotionConfig &config)
     if (config.mode == MotionMode::PVT) {
         {
             QMutexLocker locker(&sharedContext_.plannedTrajectoryMutex);
-            activePvtTrajectory_ = sharedContext_.plannedTrajectory;
+            activePvtSegments_ = sharedContext_.plannedPvtSegments;
         }
-        if (activePvtTrajectory_.size() < 2) {
+        if (activePvtSegments_.isEmpty()) {
             emit logMessage(QStringLiteral("开始运动失败：PVTS 轨迹点数不足。"));
             return;
         }
-        if (!ethercat_.startPvtsMotion(config, activePvtTrajectory_, errorMessage)) {
+        if (!startPvtSegment(0, errorMessage)) {
             emit logMessage(QStringLiteral("PVTS 整表下发失败: %1").arg(errorMessage));
             return;
         }
-        sharedContext_.sentPointCount.storeRelease(activePvtTrajectory_.size());
     }
 
     std::this_thread::sleep_for(kWarmupDelay);
@@ -432,12 +608,13 @@ void HardwareThread::handleStopMotion()
     {
         QMutexLocker locker(&sharedContext_.plannedTrajectoryMutex);
         sharedContext_.plannedTrajectory.clear();
+        sharedContext_.plannedPvtSegments.clear();
     }
     {
         QMutexLocker locker(&sharedContext_.latestCommandMutex);
         sharedContext_.latestCommand = {};
     }
-    activePvtTrajectory_.clear();
+    clearPvtMotionState();
     sharedContext_.trajectoryQueue.clear();
     {
         QMutexLocker locker(&sharedContext_.feedbackMutex);
