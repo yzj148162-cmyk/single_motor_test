@@ -1707,6 +1707,9 @@ release\mainwindow.obj: ..\..\mainwindow.cpp ..\..\mainwindow.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtCore\QVariant \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QApplication \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qapplication.h \
+		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QCheckBox \
+		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qcheckbox.h \
+		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qabstractbutton.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QComboBox \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qcombobox.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qabstractitemdelegate.h \
@@ -1756,7 +1759,6 @@ release\mainwindow.obj: ..\..\mainwindow.cpp ..\..\mainwindow.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtGui\qfontdatabase.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QPushButton \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qpushbutton.h \
-		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qabstractbutton.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QRadioButton \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qradiobutton.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QSpinBox \
@@ -1764,8 +1766,6 @@ release\mainwindow.obj: ..\..\mainwindow.cpp ..\..\mainwindow.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qstatusbar.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QVBoxLayout \
 		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QWidget \
-		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\QCheckBox \
-		D:\Qt\6.8.3\msvc2022_64\include\QtWidgets\qcheckbox.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtCore\QDateTime \
 		D:\Qt\6.8.3\msvc2022_64\include\QtCore\qdatetime.h \
 		D:\Qt\6.8.3\msvc2022_64\include\QtCore\qcalendar.h \
