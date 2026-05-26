@@ -2,11 +2,7 @@
 
 #include "ui_mainwindow.h"
 
-#include <QCheckBox>
-#include <QComboBox>
 #include <QDateTime>
-#include <QDoubleSpinBox>
-#include <QFormLayout>
 #include <QLabel>
 #include <QMutexLocker>
 #include <QPainter>
@@ -294,6 +290,10 @@ void MainWindow::setupRuntimeUi()
     ui_->modeCombo->addItem(QStringLiteral("PVT"), static_cast<int>(MotionMode::PVT));
     ui_->modeCombo->addItem(QStringLiteral("CSP"), static_cast<int>(MotionMode::CSP));
 
+    ui_->trajectoryShapeCombo->clear();
+    ui_->trajectoryShapeCombo->addItem(QStringLiteral("点动轨迹"), static_cast<int>(TrajectoryShape::Jog));
+    ui_->trajectoryShapeCombo->addItem(QStringLiteral("正弦轨迹"), static_cast<int>(TrajectoryShape::Sine));
+
     ui_->systemPlanningPeriodMsSpin->setRange(1, 1000);
     ui_->uiRefreshMsSpin->setRange(kMinUiRefreshMs, kMaxUiRefreshMs);
     ui_->uiRefreshMsSpin->setValue(systemConfig_.uiRefreshMs);
@@ -303,30 +303,7 @@ void MainWindow::setupRuntimeUi()
     ui_->turnUnitRadio->setText(QStringLiteral("圈数"));
     ui_->deltaAngleLabel->setText(QStringLiteral("点动位移"));
     ui_->durationLabel->setText(QStringLiteral("轨迹时长"));
-
-    trajectoryShapeCombo_ = new QComboBox(ui_->motionGroupBox);
-    trajectoryShapeCombo_->addItem(QStringLiteral("点动轨迹"), static_cast<int>(TrajectoryShape::Jog));
-    trajectoryShapeCombo_->addItem(QStringLiteral("正弦轨迹"), static_cast<int>(TrajectoryShape::Sine));
-    ui_->motionFormLayout->addRow(QStringLiteral("轨迹类型"), trajectoryShapeCombo_);
-
-    sineAmplitudeSpin_ = new QDoubleSpinBox(ui_->motionGroupBox);
-    sineAmplitudeSpin_->setDecimals(4);
-    sineAmplitudeSpin_->setRange(0.001, 1000000.0);
-    sineAmplitudeSpin_->setValue(30.0);
-    ui_->motionFormLayout->addRow(QStringLiteral("正弦幅值"), sineAmplitudeSpin_);
-
-    sineOmegaSpin_ = new QDoubleSpinBox(ui_->motionGroupBox);
-    sineOmegaSpin_->setDecimals(4);
-    sineOmegaSpin_->setRange(0.001, 1000.0);
-    sineOmegaSpin_->setValue(1.0);
-    sineOmegaSpin_->setSuffix(QStringLiteral(" rad/s"));
-    ui_->motionFormLayout->addRow(QStringLiteral("正弦角频率"), sineOmegaSpin_);
-
-    reciprocatingCheck_ = new QCheckBox(QStringLiteral("正放后反向返回起点"), ui_->motionGroupBox);
-    ui_->motionFormLayout->addRow(QStringLiteral("往复运动"), reciprocatingCheck_);
-
-    traceStatusLabel_ = new QLabel(QStringLiteral("未启动"), ui_->statusBox);
-    ui_->statusLayout->insertRow(6, QStringLiteral("Trace状态"), traceStatusLabel_);
+    ui_->traceStatusLabel->setText(QStringLiteral("未启动"));
 
     auto *plotLayout = new QVBoxLayout(ui_->errorPlotHost);
     plotLayout->setContentsMargins(0, 0, 0, 0);
@@ -366,12 +343,10 @@ void MainWindow::connectSignals()
             applyPositionUnitSelection();
         }
     });
-    if (trajectoryShapeCombo_ != nullptr) {
-        connect(trajectoryShapeCombo_,
-                &QComboBox::currentIndexChanged,
-                this,
-                [this](int) { applyTrajectorySelection(); });
-    }
+    connect(ui_->trajectoryShapeCombo,
+            &QComboBox::currentIndexChanged,
+            this,
+            [this](int) { applyTrajectorySelection(); });
 
     connect(hardwareThread_, &HardwareThread::logMessage, this, &MainWindow::onHardwareLog);
     connect(plannerThread_, &PlannerThread::logMessage, this, &MainWindow::onPlannerLog);
@@ -463,9 +438,7 @@ void MainWindow::applyPositionUnitSelection()
     ui_->deltaAngleSpin->setSuffix(positionUnitSuffix);
     ui_->minVelSpin->setSuffix(velocityUnitSuffix);
     ui_->maxVelSpin->setSuffix(velocityUnitSuffix);
-    if (sineAmplitudeSpin_ != nullptr) {
-        sineAmplitudeSpin_->setSuffix(positionUnitSuffix);
-    }
+    ui_->sineAmplitudeSpin->setSuffix(positionUnitSuffix);
     ui_->positionLabel->setText(QStringLiteral("--") + positionUnitSuffix);
     ui_->errorLabel->setText(QStringLiteral("当前位置误差: --%1").arg(positionUnitSuffix));
     if (errorPlot_ != nullptr) {
@@ -475,19 +448,16 @@ void MainWindow::applyPositionUnitSelection()
 
 void MainWindow::applyTrajectorySelection()
 {
-    const TrajectoryShape shape = trajectoryShapeCombo_ == nullptr
-        ? TrajectoryShape::Jog
-        : static_cast<TrajectoryShape>(trajectoryShapeCombo_->currentData().toInt());
+    const TrajectoryShape shape =
+        static_cast<TrajectoryShape>(ui_->trajectoryShapeCombo->currentData().toInt());
     const bool sineSelected = (shape == TrajectoryShape::Sine);
 
     ui_->deltaAngleSpin->setEnabled(!sineSelected);
     ui_->deltaAngleLabel->setEnabled(!sineSelected);
-    if (sineAmplitudeSpin_ != nullptr) {
-        sineAmplitudeSpin_->setEnabled(sineSelected);
-    }
-    if (sineOmegaSpin_ != nullptr) {
-        sineOmegaSpin_->setEnabled(sineSelected);
-    }
+    ui_->sineAmplitudeSpin->setEnabled(sineSelected);
+    ui_->sineAmplitudeLabel->setEnabled(sineSelected);
+    ui_->sineOmegaSpin->setEnabled(sineSelected);
+    ui_->sineOmegaLabel->setEnabled(sineSelected);
 }
 
 double MainWindow::currentPulseEquivalent() const
@@ -509,15 +479,14 @@ MotionConfig MainWindow::collectMotionConfig() const
 {
     MotionConfig config;
     config.mode = static_cast<MotionMode>(ui_->modeCombo->currentData().toInt());
-    if (trajectoryShapeCombo_ != nullptr) {
-        config.trajectoryShape = static_cast<TrajectoryShape>(trajectoryShapeCombo_->currentData().toInt());
-    }
+    config.trajectoryShape =
+        static_cast<TrajectoryShape>(ui_->trajectoryShapeCombo->currentData().toInt());
     config.axis = static_cast<quint16>(ui_->axisSpin->value());
     config.deltaDeg = ui_->deltaAngleSpin->value();
     config.durationS = ui_->durationSpin->value();
-    config.sineAmplitude = sineAmplitudeSpin_ == nullptr ? 0.0 : sineAmplitudeSpin_->value();
-    config.sineAngularFrequency = sineOmegaSpin_ == nullptr ? 0.0 : sineOmegaSpin_->value();
-    config.reciprocating = reciprocatingCheck_ != nullptr && reciprocatingCheck_->isChecked();
+    config.sineAmplitude = ui_->sineAmplitudeSpin->value();
+    config.sineAngularFrequency = ui_->sineOmegaSpin->value();
+    config.reciprocating = ui_->reciprocatingCheck->isChecked();
     config.systemPlanningPeriodMs = ui_->systemPlanningPeriodMsSpin->value();
     config.minVelDeg = ui_->minVelSpin->value();
     config.maxVelDeg = ui_->maxVelSpin->value();
@@ -552,10 +521,8 @@ void MainWindow::updateSnapshot(const UiSnapshot &snapshot)
     ui_->cycleLabel->setText(QStringLiteral("已发送 %1，补队列 %2")
                                  .arg(snapshot.sentPointCount)
                                  .arg(snapshot.queueFillCount));
-    if (traceStatusLabel_ != nullptr) {
-        traceStatusLabel_->setText(traceStatusToText(snapshot.feedback.traceStatus,
+    ui_->traceStatusLabel->setText(traceStatusToText(snapshot.feedback.traceStatus,
                                                      snapshot.feedback.traceLastApiResult));
-    }
 
     QString errorLabelText = QStringLiteral("当前位置误差: %1%2")
                                  .arg(QString::number(errorDisplay, 'f', 4))

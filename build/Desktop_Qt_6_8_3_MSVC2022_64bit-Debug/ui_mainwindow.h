@@ -11,6 +11,7 @@
 
 #include <QtCore/QVariant>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QFormLayout>
@@ -53,6 +54,14 @@ public:
     QDoubleSpinBox *minVelSpin;
     QLabel *maxVelLabel;
     QDoubleSpinBox *maxVelSpin;
+    QLabel *trajectoryShapeLabel;
+    QComboBox *trajectoryShapeCombo;
+    QLabel *sineAmplitudeLabel;
+    QDoubleSpinBox *sineAmplitudeSpin;
+    QLabel *sineOmegaLabel;
+    QDoubleSpinBox *sineOmegaSpin;
+    QLabel *reciprocatingLabel;
+    QCheckBox *reciprocatingCheck;
     QGroupBox *displayGroupBox;
     QFormLayout *displayFormLayout;
     QLabel *uiRefreshLabel;
@@ -105,6 +114,8 @@ public:
     QLabel *cycleLabel;
     QLabel *errorTextLabel;
     QLabel *errorLabel;
+    QLabel *traceStatusTextLabel;
+    QLabel *traceStatusLabel;
     QGroupBox *tipBox;
     QVBoxLayout *tipLayout;
     QLabel *tipLabel;
@@ -217,6 +228,54 @@ public:
         maxVelSpin->setValue(60.000000000000000);
 
         motionFormLayout->setWidget(6, QFormLayout::FieldRole, maxVelSpin);
+
+        trajectoryShapeLabel = new QLabel(motionGroupBox);
+        trajectoryShapeLabel->setObjectName("trajectoryShapeLabel");
+
+        motionFormLayout->setWidget(7, QFormLayout::LabelRole, trajectoryShapeLabel);
+
+        trajectoryShapeCombo = new QComboBox(motionGroupBox);
+        trajectoryShapeCombo->setObjectName("trajectoryShapeCombo");
+
+        motionFormLayout->setWidget(7, QFormLayout::FieldRole, trajectoryShapeCombo);
+
+        sineAmplitudeLabel = new QLabel(motionGroupBox);
+        sineAmplitudeLabel->setObjectName("sineAmplitudeLabel");
+
+        motionFormLayout->setWidget(8, QFormLayout::LabelRole, sineAmplitudeLabel);
+
+        sineAmplitudeSpin = new QDoubleSpinBox(motionGroupBox);
+        sineAmplitudeSpin->setObjectName("sineAmplitudeSpin");
+        sineAmplitudeSpin->setMinimum(0.001000000000000);
+        sineAmplitudeSpin->setMaximum(1000000.000000000000000);
+        sineAmplitudeSpin->setDecimals(4);
+        sineAmplitudeSpin->setValue(30.000000000000000);
+
+        motionFormLayout->setWidget(8, QFormLayout::FieldRole, sineAmplitudeSpin);
+
+        sineOmegaLabel = new QLabel(motionGroupBox);
+        sineOmegaLabel->setObjectName("sineOmegaLabel");
+
+        motionFormLayout->setWidget(9, QFormLayout::LabelRole, sineOmegaLabel);
+
+        sineOmegaSpin = new QDoubleSpinBox(motionGroupBox);
+        sineOmegaSpin->setObjectName("sineOmegaSpin");
+        sineOmegaSpin->setMinimum(0.001000000000000);
+        sineOmegaSpin->setMaximum(1000.000000000000000);
+        sineOmegaSpin->setDecimals(4);
+        sineOmegaSpin->setValue(1.000000000000000);
+
+        motionFormLayout->setWidget(9, QFormLayout::FieldRole, sineOmegaSpin);
+
+        reciprocatingLabel = new QLabel(motionGroupBox);
+        reciprocatingLabel->setObjectName("reciprocatingLabel");
+
+        motionFormLayout->setWidget(10, QFormLayout::LabelRole, reciprocatingLabel);
+
+        reciprocatingCheck = new QCheckBox(motionGroupBox);
+        reciprocatingCheck->setObjectName("reciprocatingCheck");
+
+        motionFormLayout->setWidget(10, QFormLayout::FieldRole, reciprocatingCheck);
 
 
         leftLayout->addWidget(motionGroupBox);
@@ -485,6 +544,16 @@ public:
 
         statusLayout->setWidget(5, QFormLayout::FieldRole, errorLabel);
 
+        traceStatusTextLabel = new QLabel(statusBox);
+        traceStatusTextLabel->setObjectName("traceStatusTextLabel");
+
+        statusLayout->setWidget(6, QFormLayout::LabelRole, traceStatusTextLabel);
+
+        traceStatusLabel = new QLabel(statusBox);
+        traceStatusLabel->setObjectName("traceStatusLabel");
+
+        statusLayout->setWidget(6, QFormLayout::FieldRole, traceStatusLabel);
+
 
         rightLayout->addWidget(statusBox);
 
@@ -548,6 +617,13 @@ public:
         minVelSpin->setSuffix(QCoreApplication::translate("MainWindow", " deg/s", nullptr));
         maxVelLabel->setText(QCoreApplication::translate("MainWindow", "\346\234\200\345\244\247\351\200\237\345\272\246", nullptr));
         maxVelSpin->setSuffix(QCoreApplication::translate("MainWindow", " deg/s", nullptr));
+        trajectoryShapeLabel->setText(QCoreApplication::translate("MainWindow", "\350\275\250\350\277\271\347\261\273\345\236\213", nullptr));
+        sineAmplitudeLabel->setText(QCoreApplication::translate("MainWindow", "\346\255\243\345\274\246\345\271\205\345\200\274", nullptr));
+        sineAmplitudeSpin->setSuffix(QCoreApplication::translate("MainWindow", " deg", nullptr));
+        sineOmegaLabel->setText(QCoreApplication::translate("MainWindow", "\346\255\243\345\274\246\350\247\222\351\242\221\347\216\207", nullptr));
+        sineOmegaSpin->setSuffix(QCoreApplication::translate("MainWindow", " rad/s", nullptr));
+        reciprocatingLabel->setText(QCoreApplication::translate("MainWindow", "\345\276\200\345\244\215\350\277\220\345\212\250", nullptr));
+        reciprocatingCheck->setText(QCoreApplication::translate("MainWindow", "\346\255\243\346\224\276\345\220\216\345\217\215\345\220\221\350\277\224\345\233\236\350\265\267\347\202\271", nullptr));
         displayGroupBox->setTitle(QCoreApplication::translate("MainWindow", "\346\230\276\347\244\272\344\270\216\345\210\267\346\226\260", nullptr));
         uiRefreshLabel->setText(QCoreApplication::translate("MainWindow", "UI\346\230\276\347\244\272\345\221\250\346\234\237", nullptr));
         uiRefreshMsSpin->setSuffix(QCoreApplication::translate("MainWindow", " ms", nullptr));
@@ -559,8 +635,8 @@ public:
         cspInterpIndexLabel->setText(QCoreApplication::translate("MainWindow", "\346\227\266\351\227\264\345\237\272\346\214\207\346\225\260(0x60C2:02)", nullptr));
         advancedGroupBox->setTitle(QCoreApplication::translate("MainWindow", "\351\253\230\347\272\247\350\256\276\347\275\256", nullptr));
         positionUnitLabel->setText(QCoreApplication::translate("MainWindow", "\344\275\215\347\275\256\347\274\251\346\224\276", nullptr));
-        degreeUnitRadio->setText(QCoreApplication::translate("MainWindow", "\347\221\231\346\216\221\345\256\263", nullptr));
-        turnUnitRadio->setText(QCoreApplication::translate("MainWindow", "\351\215\246\345\240\237\346\232\237", nullptr));
+        degreeUnitRadio->setText(QCoreApplication::translate("MainWindow", "\350\247\222\345\272\246", nullptr));
+        turnUnitRadio->setText(QCoreApplication::translate("MainWindow", "\345\234\210\346\225\260", nullptr));
         cspRxpdoPosAddrLabel->setText(QCoreApplication::translate("MainWindow", "\347\233\256\346\240\207\344\275\215\347\275\256\345\234\260\345\235\200(RxPDO)", nullptr));
         cspTxpdoStatusAddrLabel->setText(QCoreApplication::translate("MainWindow", "\347\212\266\346\200\201\345\255\227\345\234\260\345\235\200(TxPDO 0x6041)", nullptr));
         cspTxpdoModeAddrLabel->setText(QCoreApplication::translate("MainWindow", "\346\250\241\345\274\217\346\230\276\347\244\272\345\234\260\345\235\200(TxPDO 0x6061)", nullptr));
@@ -586,6 +662,8 @@ public:
         cycleLabel->setText(QCoreApplication::translate("MainWindow", "--", nullptr));
         errorTextLabel->setText(QCoreApplication::translate("MainWindow", "\344\275\215\347\275\256\350\257\257\345\267\256", nullptr));
         errorLabel->setText(QCoreApplication::translate("MainWindow", "\345\275\223\345\211\215\344\275\215\347\275\256\350\257\257\345\267\256: -- deg", nullptr));
+        traceStatusTextLabel->setText(QCoreApplication::translate("MainWindow", "Trace\347\212\266\346\200\201", nullptr));
+        traceStatusLabel->setText(QCoreApplication::translate("MainWindow", "\346\234\252\345\220\257\345\212\250", nullptr));
         tipBox->setTitle(QCoreApplication::translate("MainWindow", "\346\236\266\346\236\204\350\257\264\346\230\216", nullptr));
         tipLabel->setText(QCoreApplication::translate("MainWindow", "1. \347\263\273\347\273\237\350\247\204\345\210\222\345\221\250\346\234\237\347\224\250\344\272\216\344\270\212\345\261\202\347\262\227\350\247\204\345\210\222\343\200\202CSP \344\274\232\345\234\250\346\255\244\345\237\272\347\241\200\344\270\212\347\273\206\345\214\226\345\210\260 1ms\357\274\233PVT(PVTS) \344\274\232\347\233\264\346\216\245\346\214\211\350\257\245\345\221\250\346\234\237\347\224\237\346\210\220\346\225\264\350\241\250\347\202\271\345\210\227\343\200\202\n"
 "2. PVT \347\202\271\346\225\260\344\274\260\347\256\227\347\272\246\344\270\272 ceil(\346\200\273\346\227\266\351\225\277 / \347\263\273\347\273\237\350\247\204\345\210\222\345\221\250\346\234\237) + 1\357\274\214\345\275\223\345\211\215\346\216\247\345\210\266\345\215\241\344\270\212\351\231\220\344\270\272 5000 \347\202\271\343\200\202\n"

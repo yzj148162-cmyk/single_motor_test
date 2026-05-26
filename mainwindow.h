@@ -16,13 +16,7 @@ class MainWindow;
 QT_END_NAMESPACE
 
 class ErrorPlotWidget;
-class QCheckBox;
-class QComboBox;
-class QDoubleSpinBox;
-class QLabel;
 
-// 主窗口只负责 UI 线程内的工作：
-// 参数输入、按钮操作、粗粒度状态显示，以及线程生命周期管理。
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -62,11 +56,6 @@ private slots:
 private:
     Ui::MainWindow *ui_ = nullptr;
     ErrorPlotWidget *errorPlot_ = nullptr;
-    QComboBox *trajectoryShapeCombo_ = nullptr;
-    QDoubleSpinBox *sineAmplitudeSpin_ = nullptr;
-    QDoubleSpinBox *sineOmegaSpin_ = nullptr;
-    QCheckBox *reciprocatingCheck_ = nullptr;
-    QLabel *traceStatusLabel_ = nullptr;
 
     SharedContext sharedContext_;
     SystemConfig systemConfig_;
