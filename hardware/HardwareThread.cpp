@@ -1,6 +1,7 @@
 ﻿#include "hardware/HardwareThread.h"
 
 #include <algorithm>
+#include <cmath>
 #include <QMutexLocker>
 
 #include <chrono>
@@ -11,6 +12,15 @@ constexpr auto kWarmupDelay = std::chrono::milliseconds(20);
 constexpr auto kPrimePollInterval = std::chrono::milliseconds(1);
 constexpr auto kPrimeTimeout = std::chrono::milliseconds(500);
 constexpr int kLogTimeDecimals = 4;
+constexpr int kResumeConfirmCycles = 2;
+constexpr double kResumeThresholdDeg = 0.001;
+constexpr int kPvtTraceSamplePeriodUs = 1000;
+constexpr int kPvtTraceBaseCycleUs = 1000;
+constexpr int kPvtTraceErrorIndex = 0;
+constexpr short kPvtTraceObjectDataType = 19;
+constexpr int kPvtTraceFollowingErrorIndex = 0x60F4;
+constexpr int kPvtTraceFollowingErrorSubIndex = 0x00;
+constexpr short kPvtTraceValueBytes = 4;
 }
 
 HardwareThread::HardwareThread(SharedContext &sharedContext, const SystemConfig &systemConfig, QObject *parent)
@@ -70,6 +80,101 @@ void HardwareThread::clearPvtMotionState()
     activePvtTrajectory_.clear();
     activePvtSegments_.clear();
     activePvtSegmentIndex_ = -1;
+    pvtHandoffMeasurement_ = {};
+    resetPvtTraceState();
+}
+
+void HardwareThread::resetPvtTraceState()
+{
+    pvtTraceReader_.reset();
+    pvtTraceActive_ = false;
+}
+
+void HardwareThread::configurePvtTrace(const MotionConfig &config)
+{
+    // 这里直接对齐雷赛 Motion 的 trace 配置：
+    // dmc_trace_add_config_object(card=0, dataType=19, dataIndex=0x60F4,
+    //                             dataSubIndex=0, slaveId=nodeId, dataBytes=4)
+    // 即读取从站对象字典 0x60F4:00（Following Error）。
+    RuntimeTraceSlaveReader::ReaderConfig traceConfig;
+    traceConfig.samplePeriodUs = kPvtTraceSamplePeriodUs;
+    traceConfig.traceBaseCycleUs = kPvtTraceBaseCycleUs;
+
+    RuntimeTraceSlaveReader::ObjectConfig followingErrorObject;
+    followingErrorObject.logicalIndex = kPvtTraceErrorIndex;
+    followingErrorObject.dataType = kPvtTraceObjectDataType;
+    followingErrorObject.dataIndex = kPvtTraceFollowingErrorIndex;
+    followingErrorObject.dataSubIndex = kPvtTraceFollowingErrorSubIndex;
+    followingErrorObject.slaveId = static_cast<short>(config.node);
+    followingErrorObject.apiDataBytes = kPvtTraceValueBytes;
+    followingErrorObject.valueBytes = kPvtTraceValueBytes;
+
+    traceConfig.objects.push_back(followingErrorObject);
+
+    pvtTraceReader_.setConfig(traceConfig);
+    pvtTraceActive_ = true;
+
+    if (pvtTraceReader_.configure()) {
+        {
+            QMutexLocker locker(&sharedContext_.feedbackMutex);
+            sharedContext_.feedback.traceStatus = TraceStatus::Waiting;
+            sharedContext_.feedback.traceLastApiResult = pvtTraceReader_.lastApiResult();
+        }
+        emit logMessage(
+            QStringLiteral("PVT Trace 已启用：slave=%1，对象=0x60F4:00，采样周期=%2us。")
+                .arg(config.node)
+                .arg(traceConfig.samplePeriodUs));
+        return;
+    }
+
+    {
+        QMutexLocker locker(&sharedContext_.feedbackMutex);
+        sharedContext_.feedback.traceStatus = TraceStatus::Failed;
+        sharedContext_.feedback.traceLastApiResult = pvtTraceReader_.lastApiResult();
+    }
+    emit logMessage(QStringLiteral("PVT Trace 启用失败，将继续沿用原有误差读取链路，trace rc=%1。")
+                        .arg(pvtTraceReader_.lastApiResult()));
+}
+
+void HardwareThread::updatePvtTraceFeedback(FeedbackData &feedback)
+{
+    if (!pvtTraceActive_) {
+        return;
+    }
+
+    const int frameCount = pvtTraceReader_.readTraceCached();
+    if (frameCount < 0) {
+        if (!pvtTraceReader_.hasEverRead()) {
+            feedback.traceErrorValid = false;
+        }
+        feedback.traceLastApiResult = pvtTraceReader_.lastApiResult();
+        feedback.traceStatus = pvtTraceReader_.isUnavailable() ? TraceStatus::Failed : TraceStatus::Waiting;
+        return;
+    }
+
+    const std::vector<RuntimeTraceSlaveReader::Sample> samples = pvtTraceReader_.takeSamples();
+    if (samples.empty()) {
+        feedback.traceLastApiResult = pvtTraceReader_.lastApiResult();
+        if (feedback.traceStatus != TraceStatus::Active) {
+            feedback.traceStatus = TraceStatus::Waiting;
+        }
+        return;
+    }
+
+    const std::vector<double> &values = samples.back().values;
+    if (values.size() <= kPvtTraceErrorIndex) {
+        feedback.traceErrorValid = false;
+        feedback.traceLastApiResult = pvtTraceReader_.lastApiResult();
+        feedback.traceStatus = TraceStatus::Failed;
+        return;
+    }
+
+    feedback.traceTargetPosRaw = 0;
+    feedback.traceActualPosRaw = 0;
+    feedback.traceErrorRaw = static_cast<qint32>(std::llround(values.at(kPvtTraceErrorIndex)));
+    feedback.traceErrorValid = true;
+    feedback.traceLastApiResult = pvtTraceReader_.lastApiResult();
+    feedback.traceStatus = TraceStatus::Active;
 }
 
 qint64 HardwareThread::uniquePointCountForPvtSegment(qsizetype segmentIndex) const
@@ -145,6 +250,9 @@ void HardwareThread::run()
     emit logMessage(QStringLiteral("硬件线程已启动，周期=%1us。").arg(systemConfig_.hardwareCycleUs));
 
     using Clock = std::chrono::steady_clock;
+    const auto elapsedMs = [](const Clock::time_point &start, const Clock::time_point &end) {
+        return std::chrono::duration<double, std::milli>(end - start).count();
+    };
     auto nextTick = Clock::now();
 
     while (sharedContext_.running.loadAcquire()) {
@@ -237,11 +345,23 @@ void HardwareThread::run()
                                             .arg(activePvtSegmentIndex_ + 1)
                                             .arg(activePvtSegments_.size())
                                             .arg(nextSegmentIndex + 1));
+                        pvtHandoffMeasurement_ = {};
+                        pvtHandoffMeasurement_.fromSegmentIndex = activePvtSegmentIndex_;
+                        pvtHandoffMeasurement_.toSegmentIndex = nextSegmentIndex;
+                        pvtHandoffMeasurement_.doneTime = Clock::now();
+                        pvtHandoffMeasurement_.launchBeginTime = Clock::now();
                         if (!startPvtSegment(nextSegmentIndex, errorMessage)) {
                             emit logMessage(QStringLiteral("PVT 下一段装表失败: %1").arg(errorMessage));
                             feedback.fault = true;
                             motionActive_ = false;
+                            pvtHandoffMeasurement_ = {};
                         } else {
+                            pvtHandoffMeasurement_.launchEndTime = Clock::now();
+                            pvtHandoffMeasurement_.resumeBasePosRaw = feedback.actualPosRaw;
+                            pvtHandoffMeasurement_.resumeThresholdRaw = std::max<qint32>(
+                                1,
+                                static_cast<qint32>(std::llround(activeConfig_.rawPerDeg * kResumeThresholdDeg)));
+                            pvtHandoffMeasurement_.waitingForResume = true;
                             feedback.motionRunning = true;
                         }
                     } else if (done) {
@@ -276,7 +396,61 @@ void HardwareThread::run()
                 if (!ethercat_.readFeedback(activeConfig_, feedback, errorMessage)) {
                     emit logMessage(QStringLiteral("硬件线程读取反馈失败: %1").arg(errorMessage));
                     feedback.fault = true;
+                    pvtHandoffMeasurement_ = {};
+                } else if (pvtHandoffMeasurement_.waitingForResume) {
+                    const qint32 deltaRaw = feedback.actualPosRaw - pvtHandoffMeasurement_.resumeBasePosRaw;
+                    const qint32 absDeltaRaw = std::abs(deltaRaw);
+                    const int direction = deltaRaw > 0 ? 1 : (deltaRaw < 0 ? -1 : 0);
+
+                    if (absDeltaRaw >= pvtHandoffMeasurement_.resumeThresholdRaw && direction != 0) {
+                        if (pvtHandoffMeasurement_.resumeDirection == 0
+                            || pvtHandoffMeasurement_.resumeDirection == direction) {
+                            pvtHandoffMeasurement_.resumeDirection = direction;
+                            ++pvtHandoffMeasurement_.resumeConfirmCount;
+                        } else {
+                            pvtHandoffMeasurement_.resumeDirection = direction;
+                            pvtHandoffMeasurement_.resumeConfirmCount = 1;
+                        }
+                    } else {
+                        pvtHandoffMeasurement_.resumeDirection = 0;
+                        pvtHandoffMeasurement_.resumeConfirmCount = 0;
+                    }
+
+                    if (pvtHandoffMeasurement_.resumeConfirmCount >= kResumeConfirmCycles) {
+                        const auto resumeTime = Clock::now();
+                        emit logMessage(
+                            QStringLiteral(
+                                "PVT 接续耗时：第 %1 段 -> 第 %2 段，done->launchBegin=%3ms，launchBegin->launchEnd=%4ms，done->launchEnd=%5ms，done->motionResume=%6ms，launchEnd->motionResume=%7ms。")
+                                .arg(pvtHandoffMeasurement_.fromSegmentIndex + 1)
+                                .arg(pvtHandoffMeasurement_.toSegmentIndex + 1)
+                                .arg(QString::number(
+                                    elapsedMs(pvtHandoffMeasurement_.doneTime, pvtHandoffMeasurement_.launchBeginTime),
+                                    'f',
+                                    3))
+                                .arg(QString::number(
+                                    elapsedMs(
+                                        pvtHandoffMeasurement_.launchBeginTime,
+                                        pvtHandoffMeasurement_.launchEndTime),
+                                    'f',
+                                    3))
+                                .arg(QString::number(
+                                    elapsedMs(pvtHandoffMeasurement_.doneTime, pvtHandoffMeasurement_.launchEndTime),
+                                    'f',
+                                    3))
+                                .arg(QString::number(
+                                    elapsedMs(pvtHandoffMeasurement_.doneTime, resumeTime),
+                                    'f',
+                                    3))
+                                .arg(QString::number(
+                                    elapsedMs(pvtHandoffMeasurement_.launchEndTime, resumeTime),
+                                    'f',
+                                    3)));
+                        pvtHandoffMeasurement_ = {};
+                    }
                 }
+            }
+            if (activeConfig_.mode == MotionMode::PVT) {
+                updatePvtTraceFeedback(feedback);
             }
             feedback.motionRunning = motionActive_;
             feedback.boardInitialized = boardInitialized_;
@@ -361,6 +535,9 @@ void HardwareThread::handleInitializeBoard(const MotionConfig &config)
         QMutexLocker locker(&sharedContext_.feedbackMutex);
         sharedContext_.feedback.boardInitialized = true;
         sharedContext_.feedback.fault = false;
+        sharedContext_.feedback.traceErrorValid = false;
+        sharedContext_.feedback.traceStatus = TraceStatus::Inactive;
+        sharedContext_.feedback.traceLastApiResult = 0;
     }
     emit boardStateChanged(true);
     emit logMessage(QStringLiteral("控制卡初始化成功。"));
@@ -381,6 +558,9 @@ void HardwareThread::handleCloseBoard()
         QMutexLocker locker(&sharedContext_.feedbackMutex);
         sharedContext_.feedback.boardInitialized = false;
         sharedContext_.feedback.motionRunning = false;
+        sharedContext_.feedback.traceErrorValid = false;
+        sharedContext_.feedback.traceStatus = TraceStatus::Inactive;
+        sharedContext_.feedback.traceLastApiResult = 0;
     }
     emit boardStateChanged(false);
     emit logMessage(QStringLiteral("控制卡已关闭。"));
@@ -485,6 +665,13 @@ void HardwareThread::handleStartMotion(const MotionConfig &config)
     {
         QMutexLocker locker(&sharedContext_.feedbackMutex);
         sharedContext_.feedback.motionTimeS = 0.0;
+        sharedContext_.feedback.traceActualPosRaw = 0;
+        sharedContext_.feedback.traceTargetPosRaw = 0;
+        sharedContext_.feedback.traceErrorRaw = 0;
+        sharedContext_.feedback.traceErrorValid = false;
+        sharedContext_.feedback.traceStatus =
+            (config.mode == MotionMode::PVT) ? TraceStatus::Waiting : TraceStatus::Inactive;
+        sharedContext_.feedback.traceLastApiResult = 0;
     }
 
     QString errorMessage;
@@ -554,7 +741,15 @@ void HardwareThread::handleStartMotion(const MotionConfig &config)
             emit logMessage(QStringLiteral("开始运动失败：PVTS 轨迹点数不足。"));
             return;
         }
+        configurePvtTrace(config);
         if (!startPvtSegment(0, errorMessage)) {
+            resetPvtTraceState();
+            {
+                QMutexLocker locker(&sharedContext_.feedbackMutex);
+                sharedContext_.feedback.traceErrorValid = false;
+                sharedContext_.feedback.traceStatus = TraceStatus::Inactive;
+                sharedContext_.feedback.traceLastApiResult = 0;
+            }
             emit logMessage(QStringLiteral("PVTS 整表下发失败: %1").arg(errorMessage));
             return;
         }
@@ -601,6 +796,9 @@ void HardwareThread::handleStopMotion()
         QMutexLocker locker(&sharedContext_.feedbackMutex);
         sharedContext_.feedback.motionRunning = false;
         sharedContext_.feedback.motionTimeS = 0.0;
+        sharedContext_.feedback.traceErrorValid = false;
+        sharedContext_.feedback.traceStatus = TraceStatus::Inactive;
+        sharedContext_.feedback.traceLastApiResult = 0;
     }
     emit logMessage(QStringLiteral("硬件线程已停止当前运动。"));
 }

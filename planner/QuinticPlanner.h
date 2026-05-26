@@ -29,13 +29,15 @@ private:
     int findCoarseSegment(double timeS) const;
     CoarseSample sampleCoarsePoint(double timeS) const;
     TrajectoryPoint interpolateFinePoint(double timeS, int coarseSegmentIndex) const;
-    double samplePositionRatio(double timeS) const;
-    double sampleVelocityDeg(double timeS) const;
+    double totalTrajectoryDurationS() const;
+    double sampleJogPositionRatio(double timeS) const;
+    double sampleJogVelocity(double timeS) const;
 
 private:
     MotionConfig config_;
     qint32 startPosRaw_ = 0;
     qint32 targetDeltaRaw_ = 0;
+    qint32 sineAmplitudeRaw_ = 0;
     QVector<CoarseSample> coarseSamples_;
     QVector<TrajectoryPoint> cachedPoints_;
     qsizetype nextIndex_ = 0;

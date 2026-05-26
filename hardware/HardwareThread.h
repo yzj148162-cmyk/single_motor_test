@@ -1,6 +1,8 @@
 #ifndef HARDWARETHREAD_H
 #define HARDWARETHREAD_H
 
+#include <chrono>
+
 #include <QMutex>
 #include <QQueue>
 #include <QThread>
@@ -9,6 +11,7 @@
 #include "common/SharedContext.h"
 #include "config/SystemConfig.h"
 #include "hardware/EthercatInterface.h"
+#include "trace_slave_read_extract/runtime_trace_slave_reader.h"
 
 // 硬件线程命令。
 // UI 线程只投递命令，不直接操作控制卡。
@@ -62,9 +65,26 @@ private:
     void handleStopMotion();
     void publishFeedback(const FeedbackData &feedback);
     void clearPvtMotionState();
+    void resetPvtTraceState();
+    void configurePvtTrace(const MotionConfig &config);
+    void updatePvtTraceFeedback(FeedbackData &feedback);
     bool startPvtSegment(qsizetype segmentIndex, QString &errorMessage);
     qint64 uniquePointCountForPvtSegment(qsizetype segmentIndex) const;
     qint64 totalPvtUniquePointCount() const;
+
+    struct PvtHandoffMeasurement
+    {
+        bool waitingForResume = false;
+        qsizetype fromSegmentIndex = -1;
+        qsizetype toSegmentIndex = -1;
+        std::chrono::steady_clock::time_point doneTime {};
+        std::chrono::steady_clock::time_point launchBeginTime {};
+        std::chrono::steady_clock::time_point launchEndTime {};
+        qint32 resumeBasePosRaw = 0;
+        qint32 resumeThresholdRaw = 1;
+        int resumeDirection = 0;
+        int resumeConfirmCount = 0;
+    };
 
 private:
     SharedContext &sharedContext_;
@@ -81,6 +101,9 @@ private:
     QVector<TrajectoryPoint> activePvtTrajectory_;
     QVector<PvtTrajectorySegment> activePvtSegments_;
     qsizetype activePvtSegmentIndex_ = -1;
+    PvtHandoffMeasurement pvtHandoffMeasurement_;
+    RuntimeTraceSlaveReader pvtTraceReader_;
+    bool pvtTraceActive_ = false;
 };
 
 #endif // HARDWARETHREAD_H

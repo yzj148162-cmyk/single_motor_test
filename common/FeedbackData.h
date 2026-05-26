@@ -3,8 +3,14 @@
 
 #include <QtGlobal>
 
-// 硬件线程每个周期写入的一份反馈快照。
-// UI 线程和规划线程都只读取这份结构，不直接访问底层驱动。
+enum class TraceStatus : qint8 {
+    Inactive = 0,
+    Waiting,
+    Active,
+    Failed
+};
+
+// Hardware thread publishes one feedback snapshot per cycle.
 struct FeedbackData
 {
     qint32 actualPosRaw = 0;
@@ -12,8 +18,13 @@ struct FeedbackData
     quint16 statusWord = 0;
     qint8 modeDisplay = 0;
     qint32 errorRaw = 0;
-    // 统一给 UI 提供“当前运动时间轴”。
-    // CSP 按已发送 1ms 点数累计，PVT 按 runIndex 对应的轨迹时间写入。
+    qint32 traceActualPosRaw = 0;
+    qint32 traceTargetPosRaw = 0;
+    qint32 traceErrorRaw = 0;
+    bool traceErrorValid = false;
+    TraceStatus traceStatus = TraceStatus::Inactive;
+    qint16 traceLastApiResult = 0;
+    // Unified motion timeline for the UI.
     double motionTimeS = 0.0;
     bool motionRunning = false;
     bool fault = false;

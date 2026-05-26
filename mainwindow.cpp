@@ -2,7 +2,12 @@
 
 #include "ui_mainwindow.h"
 
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDateTime>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QLabel>
 #include <QMutexLocker>
 #include <QPainter>
 #include <QPainterPath>
@@ -26,6 +31,8 @@ constexpr double kPulseEquivalentPerTurn = 180224.0;
 constexpr double kErrorPlotMinHalfRangeDeg = 0.001;
 constexpr int kErrorPlotDecimals = 3;
 constexpr auto kShutdownSafetyTimeout = std::chrono::seconds(2);
+const QColor kPrimaryErrorColor(220, 53, 69);
+const QColor kTraceErrorColor(13, 110, 253);
 
 double rawToDisplayUnit(qint32 rawValue, double pulsePerUnit)
 {
@@ -40,7 +47,23 @@ double rawToDegree(qint32 rawValue)
     return rawToDisplayUnit(rawValue, kPulseEquivalentPerDegree);
 }
 
+QString traceStatusToText(TraceStatus status, qint16 lastApiResult)
+{
+    switch (status) {
+    case TraceStatus::Inactive:
+        return QStringLiteral("未启动");
+    case TraceStatus::Waiting:
+        return QStringLiteral("等待首帧");
+    case TraceStatus::Active:
+        return QStringLiteral("采集中");
+    case TraceStatus::Failed:
+        return QStringLiteral("配置失败/重试中 (rc=%1)").arg(lastApiResult);
+    }
+
+    return QStringLiteral("未知");
 }
+
+} // namespace
 
 class ErrorPlotWidget : public QWidget
 {
@@ -60,16 +83,22 @@ public:
 
     void clearSamples()
     {
-        samples_.clear();
+        primarySamples_.clear();
+        traceSamples_.clear();
         update();
     }
 
-    void appendSample(double timeS, double errorValue)
+    void appendPrimarySample(double timeS, double errorValue)
     {
-        samples_.push_back(QPointF(timeS, errorValue));
-        while (samples_.size() > 2 && (samples_.back().x() - samples_.front().x()) > kPlotKeepHistoryS) {
-            samples_.removeFirst();
-        }
+        primarySamples_.push_back(QPointF(timeS, errorValue));
+        trimSeries(primarySamples_);
+        update();
+    }
+
+    void appendTraceSample(double timeS, double errorValue)
+    {
+        traceSamples_.push_back(QPointF(timeS, errorValue));
+        trimSeries(traceSamples_);
         update();
     }
 
@@ -86,26 +115,27 @@ protected:
         painter.setPen(QPen(Qt::black, 1.0));
         painter.drawRect(plotRect);
 
-        if (samples_.isEmpty()) {
+        if (primarySamples_.isEmpty() && traceSamples_.isEmpty()) {
             painter.drawText(plotRect, Qt::AlignCenter, QStringLiteral("暂无误差数据"));
             return;
         }
 
-        const double latestX = samples_.back().x();
+        double latestX = 0.0;
+        if (!primarySamples_.isEmpty()) {
+            latestX = std::max(latestX, primarySamples_.back().x());
+        }
+        if (!traceSamples_.isEmpty()) {
+            latestX = std::max(latestX, traceSamples_.back().x());
+        }
+
         const double xMax = std::max(kPlotWindowS, latestX);
         const double xMin = std::max(0.0, xMax - kPlotWindowS);
 
         double yMin = std::numeric_limits<double>::max();
         double yMax = std::numeric_limits<double>::lowest();
         bool hasVisible = false;
-        for (const QPointF &pt : samples_) {
-            if (pt.x() + 1e-9 < xMin) {
-                continue;
-            }
-            hasVisible = true;
-            yMin = std::min(yMin, pt.y());
-            yMax = std::max(yMax, pt.y());
-        }
+        updateVisibleRange(primarySamples_, xMin, hasVisible, yMin, yMax);
+        updateVisibleRange(traceSamples_, xMin, hasVisible, yMin, yMax);
 
         if (!hasVisible) {
             painter.drawText(plotRect, Qt::AlignCenter, QStringLiteral("暂无可见误差数据"));
@@ -131,24 +161,9 @@ protected:
         painter.setPen(QPen(QColor(34, 139, 34), 1.0, Qt::DashLine));
         painter.drawLine(mapPoint(QPointF(xMin, 0.0)), mapPoint(QPointF(xMax, 0.0)));
 
-        QPainterPath path;
-        bool started = false;
-        for (const QPointF &pt : samples_) {
-            if (pt.x() + 1e-9 < xMin) {
-                continue;
-            }
-
-            const QPointF mapped = mapPoint(pt);
-            if (!started) {
-                path.moveTo(mapped);
-                started = true;
-            } else {
-                path.lineTo(mapped);
-            }
-        }
-
-        painter.setPen(QPen(QColor(220, 53, 69), 2.0));
-        painter.drawPath(path);
+        drawSeries(painter, primarySamples_, xMin, mapPoint, kPrimaryErrorColor);
+        drawSeries(painter, traceSamples_, xMin, mapPoint, kTraceErrorColor);
+        drawLegend(painter, plotRect);
 
         painter.setPen(Qt::black);
         painter.drawText(QRectF(5, plotRect.top() - 8, 45, 20),
@@ -165,12 +180,90 @@ protected:
                          QString::number(xMax, 'f', 2) + QStringLiteral(" s"));
         painter.drawText(QRectF(plotRect.left(), 0, plotRect.width(), 20),
                          Qt::AlignCenter,
-                         QStringLiteral("位置误差曲线（%1）")
-                             .arg(unitSuffix_.trimmed()));
+                         QStringLiteral("位置误差对比曲线 (%1)").arg(unitSuffix_.trimmed()));
     }
 
 private:
-    QVector<QPointF> samples_;
+    template <typename MapFn>
+    void drawSeries(QPainter &painter,
+                    const QVector<QPointF> &samples,
+                    double xMin,
+                    const MapFn &mapPoint,
+                    const QColor &color) const
+    {
+        QPainterPath path;
+        bool started = false;
+        for (const QPointF &pt : samples) {
+            if (pt.x() + 1e-9 < xMin) {
+                continue;
+            }
+
+            const QPointF mapped = mapPoint(pt);
+            if (!started) {
+                path.moveTo(mapped);
+                started = true;
+            } else {
+                path.lineTo(mapped);
+            }
+        }
+
+        if (!started) {
+            return;
+        }
+
+        painter.setPen(QPen(color, 2.0));
+        painter.drawPath(path);
+    }
+
+    static void updateVisibleRange(const QVector<QPointF> &samples,
+                                   double xMin,
+                                   bool &hasVisible,
+                                   double &yMin,
+                                   double &yMax)
+    {
+        for (const QPointF &pt : samples) {
+            if (pt.x() + 1e-9 < xMin) {
+                continue;
+            }
+            hasVisible = true;
+            yMin = std::min(yMin, pt.y());
+            yMax = std::max(yMax, pt.y());
+        }
+    }
+
+    static void trimSeries(QVector<QPointF> &samples)
+    {
+        while (samples.size() > 2 && (samples.back().x() - samples.front().x()) > kPlotKeepHistoryS) {
+            samples.removeFirst();
+        }
+    }
+
+    void drawLegend(QPainter &painter, const QRectF &plotRect) const
+    {
+        const QRectF legendRect(plotRect.right() - 170, plotRect.top() + 10, 160, 42);
+        painter.fillRect(legendRect, QColor(255, 255, 255, 220));
+        painter.setPen(QPen(QColor(180, 180, 180), 1.0));
+        painter.drawRect(legendRect);
+
+        painter.setPen(QPen(kPrimaryErrorColor, 2.0));
+        painter.drawLine(QPointF(legendRect.left() + 8, legendRect.top() + 14),
+                         QPointF(legendRect.left() + 28, legendRect.top() + 14));
+        painter.setPen(Qt::black);
+        painter.drawText(QRectF(legendRect.left() + 34, legendRect.top() + 5, 120, 18),
+                         Qt::AlignLeft | Qt::AlignVCenter,
+                         QStringLiteral("原误差"));
+
+        painter.setPen(QPen(kTraceErrorColor, 2.0));
+        painter.drawLine(QPointF(legendRect.left() + 8, legendRect.top() + 30),
+                         QPointF(legendRect.left() + 28, legendRect.top() + 30));
+        painter.setPen(Qt::black);
+        painter.drawText(QRectF(legendRect.left() + 34, legendRect.top() + 21, 120, 18),
+                         Qt::AlignLeft | Qt::AlignVCenter,
+                         QStringLiteral("0x60F4 Trace"));
+    }
+
+    QVector<QPointF> primarySamples_;
+    QVector<QPointF> traceSamples_;
     QString unitSuffix_ = QStringLiteral("deg");
 };
 
@@ -186,7 +279,7 @@ MainWindow::MainWindow(QWidget *parent)
     connectSignals();
     startThreads();
 
-    appendLog(QStringLiteral("多线程控制框架已启动：系统规划周期用于上层粗规划，UI 显示周期仅用于界面刷新。"));
+    appendLog(QStringLiteral("多线程控制框架已启动：系统规划周期用于轨迹采样，UI 刷新周期只负责显示。"));
 }
 
 MainWindow::~MainWindow()
@@ -208,6 +301,32 @@ void MainWindow::setupRuntimeUi()
     ui_->positionUnitLabel->setText(QStringLiteral("位置单位"));
     ui_->degreeUnitRadio->setText(QStringLiteral("角度"));
     ui_->turnUnitRadio->setText(QStringLiteral("圈数"));
+    ui_->deltaAngleLabel->setText(QStringLiteral("点动位移"));
+    ui_->durationLabel->setText(QStringLiteral("轨迹时长"));
+
+    trajectoryShapeCombo_ = new QComboBox(ui_->motionGroupBox);
+    trajectoryShapeCombo_->addItem(QStringLiteral("点动轨迹"), static_cast<int>(TrajectoryShape::Jog));
+    trajectoryShapeCombo_->addItem(QStringLiteral("正弦轨迹"), static_cast<int>(TrajectoryShape::Sine));
+    ui_->motionFormLayout->addRow(QStringLiteral("轨迹类型"), trajectoryShapeCombo_);
+
+    sineAmplitudeSpin_ = new QDoubleSpinBox(ui_->motionGroupBox);
+    sineAmplitudeSpin_->setDecimals(4);
+    sineAmplitudeSpin_->setRange(0.001, 1000000.0);
+    sineAmplitudeSpin_->setValue(30.0);
+    ui_->motionFormLayout->addRow(QStringLiteral("正弦幅值"), sineAmplitudeSpin_);
+
+    sineOmegaSpin_ = new QDoubleSpinBox(ui_->motionGroupBox);
+    sineOmegaSpin_->setDecimals(4);
+    sineOmegaSpin_->setRange(0.001, 1000.0);
+    sineOmegaSpin_->setValue(1.0);
+    sineOmegaSpin_->setSuffix(QStringLiteral(" rad/s"));
+    ui_->motionFormLayout->addRow(QStringLiteral("正弦角频率"), sineOmegaSpin_);
+
+    reciprocatingCheck_ = new QCheckBox(QStringLiteral("正放后反向返回起点"), ui_->motionGroupBox);
+    ui_->motionFormLayout->addRow(QStringLiteral("往复运动"), reciprocatingCheck_);
+
+    traceStatusLabel_ = new QLabel(QStringLiteral("未启动"), ui_->statusBox);
+    ui_->statusLayout->insertRow(6, QStringLiteral("Trace状态"), traceStatusLabel_);
 
     auto *plotLayout = new QVBoxLayout(ui_->errorPlotHost);
     plotLayout->setContentsMargins(0, 0, 0, 0);
@@ -216,14 +335,15 @@ void MainWindow::setupRuntimeUi()
     plotLayout->addWidget(errorPlot_);
 
     ui_->tipLabel->setText(
-        QStringLiteral("1. 系统规划周期用于上层粗规划，CSP 会在此基础上细化到 1ms，PVT(PVTS) 会直接按该周期生成整表点列。\n"
-                       "2. PVT 点数估算约为 ceil(总时长 / 系统规划周期) + 1，当前控制卡单次装表上限为 5000 点。\n"
-                       "3. 位置单位可在角度和圈数之间切换，初始化控制卡时会同步下发对应脉冲当量。\n"
-                       "4. 控制卡初始化后会锁定单位选择，关闭控制卡后才能再次切换。\n"
-                       "5. UI 显示周期只负责界面刷新，不参与实时控制。"));
+        QStringLiteral("1. 系统规划周期用于上层轨迹采样，PVT 直接下发表点，CSP 会继续细化到 1ms。\n"
+                       "2. 正弦轨迹按幅值 A 和角频率 ω 生成位置 A*sin(ωt)。\n"
+                       "3. 勾选往复运动后，会先按设定轨迹正向执行，再按同一轨迹反向返回起点。\n"
+                       "4. 位置单位可在角度和圈数之间切换，初始化控制卡时会同步下发对应脉冲当量。\n"
+                       "5. UI 刷新周期只负责界面显示，不参与实时控制。"));
 
     applyUiRefreshPeriod();
     applyPositionUnitSelection();
+    applyTrajectorySelection();
 }
 
 void MainWindow::connectSignals()
@@ -246,6 +366,12 @@ void MainWindow::connectSignals()
             applyPositionUnitSelection();
         }
     });
+    if (trajectoryShapeCombo_ != nullptr) {
+        connect(trajectoryShapeCombo_,
+                &QComboBox::currentIndexChanged,
+                this,
+                [this](int) { applyTrajectorySelection(); });
+    }
 
     connect(hardwareThread_, &HardwareThread::logMessage, this, &MainWindow::onHardwareLog);
     connect(plannerThread_, &PlannerThread::logMessage, this, &MainWindow::onPlannerLog);
@@ -337,10 +463,30 @@ void MainWindow::applyPositionUnitSelection()
     ui_->deltaAngleSpin->setSuffix(positionUnitSuffix);
     ui_->minVelSpin->setSuffix(velocityUnitSuffix);
     ui_->maxVelSpin->setSuffix(velocityUnitSuffix);
+    if (sineAmplitudeSpin_ != nullptr) {
+        sineAmplitudeSpin_->setSuffix(positionUnitSuffix);
+    }
     ui_->positionLabel->setText(QStringLiteral("--") + positionUnitSuffix);
     ui_->errorLabel->setText(QStringLiteral("当前位置误差: --%1").arg(positionUnitSuffix));
     if (errorPlot_ != nullptr) {
-        errorPlot_->setUnitSuffix(QStringLiteral(" deg"));
+        errorPlot_->setUnitSuffix(QStringLiteral("deg"));
+    }
+}
+
+void MainWindow::applyTrajectorySelection()
+{
+    const TrajectoryShape shape = trajectoryShapeCombo_ == nullptr
+        ? TrajectoryShape::Jog
+        : static_cast<TrajectoryShape>(trajectoryShapeCombo_->currentData().toInt());
+    const bool sineSelected = (shape == TrajectoryShape::Sine);
+
+    ui_->deltaAngleSpin->setEnabled(!sineSelected);
+    ui_->deltaAngleLabel->setEnabled(!sineSelected);
+    if (sineAmplitudeSpin_ != nullptr) {
+        sineAmplitudeSpin_->setEnabled(sineSelected);
+    }
+    if (sineOmegaSpin_ != nullptr) {
+        sineOmegaSpin_->setEnabled(sineSelected);
     }
 }
 
@@ -363,9 +509,15 @@ MotionConfig MainWindow::collectMotionConfig() const
 {
     MotionConfig config;
     config.mode = static_cast<MotionMode>(ui_->modeCombo->currentData().toInt());
+    if (trajectoryShapeCombo_ != nullptr) {
+        config.trajectoryShape = static_cast<TrajectoryShape>(trajectoryShapeCombo_->currentData().toInt());
+    }
     config.axis = static_cast<quint16>(ui_->axisSpin->value());
     config.deltaDeg = ui_->deltaAngleSpin->value();
     config.durationS = ui_->durationSpin->value();
+    config.sineAmplitude = sineAmplitudeSpin_ == nullptr ? 0.0 : sineAmplitudeSpin_->value();
+    config.sineAngularFrequency = sineOmegaSpin_ == nullptr ? 0.0 : sineOmegaSpin_->value();
+    config.reciprocating = reciprocatingCheck_ != nullptr && reciprocatingCheck_->isChecked();
     config.systemPlanningPeriodMs = ui_->systemPlanningPeriodMsSpin->value();
     config.minVelDeg = ui_->minVelSpin->value();
     config.maxVelDeg = ui_->maxVelSpin->value();
@@ -388,6 +540,8 @@ void MainWindow::updateSnapshot(const UiSnapshot &snapshot)
     const double actualPosDisplay = rawToDisplayUnit(snapshot.feedback.actualPosRaw, pulsePerUnit);
     const double errorDisplay = rawToDisplayUnit(snapshot.feedback.errorRaw, pulsePerUnit);
     const double errorDisplayDeg = rawToDegree(snapshot.feedback.errorRaw);
+    const double traceErrorDisplay = rawToDisplayUnit(snapshot.feedback.traceErrorRaw, pulsePerUnit);
+    const double traceErrorDisplayDeg = rawToDegree(snapshot.feedback.traceErrorRaw);
 
     ui_->connectionLabel->setText(snapshot.feedback.boardInitialized ? QStringLiteral("已初始化")
                                                                      : QStringLiteral("未初始化"));
@@ -398,16 +552,30 @@ void MainWindow::updateSnapshot(const UiSnapshot &snapshot)
     ui_->cycleLabel->setText(QStringLiteral("已发送 %1，补队列 %2")
                                  .arg(snapshot.sentPointCount)
                                  .arg(snapshot.queueFillCount));
-    ui_->errorLabel->setText(QStringLiteral("当前位置误差: %1%2")
+    if (traceStatusLabel_ != nullptr) {
+        traceStatusLabel_->setText(traceStatusToText(snapshot.feedback.traceStatus,
+                                                     snapshot.feedback.traceLastApiResult));
+    }
+
+    QString errorLabelText = QStringLiteral("当前位置误差: %1%2")
                                  .arg(QString::number(errorDisplay, 'f', 4))
-                                 .arg(positionUnitSuffix));
+                                 .arg(positionUnitSuffix);
+    if (snapshot.feedback.traceErrorValid) {
+        errorLabelText += QStringLiteral(" | 0x60F4 Trace误差: %1%2")
+                              .arg(QString::number(traceErrorDisplay, 'f', 4))
+                              .arg(positionUnitSuffix);
+    }
+    ui_->errorLabel->setText(errorLabelText);
 
     if (errorPlot_ != nullptr) {
         const bool appendDuringMotion = curveCaptureActive_ && snapshot.feedback.motionRunning;
-        const bool appendTerminalPoint = curveCaptureActive_ && !snapshot.feedback.motionRunning && lastMotionRunning_
-                                      && snapshot.feedback.motionTimeS > 0.0;
+        const bool appendTerminalPoint = curveCaptureActive_ && !snapshot.feedback.motionRunning
+                                      && lastMotionRunning_ && snapshot.feedback.motionTimeS > 0.0;
         if (appendDuringMotion || appendTerminalPoint) {
-            errorPlot_->appendSample(snapshot.feedback.motionTimeS, errorDisplayDeg);
+            errorPlot_->appendPrimarySample(snapshot.feedback.motionTimeS, errorDisplayDeg);
+            if (snapshot.feedback.traceErrorValid) {
+                errorPlot_->appendTraceSample(snapshot.feedback.motionTimeS, traceErrorDisplayDeg);
+            }
         }
     }
 
@@ -467,6 +635,17 @@ void MainWindow::onStartMotion()
         appendLog(QStringLiteral("参数非法：系统规划周期必须大于 0，且不能超过总时长。"));
         return;
     }
+    if (config.trajectoryShape == TrajectoryShape::Sine) {
+        if (config.sineAmplitude <= 0.0) {
+            appendLog(QStringLiteral("参数非法：正弦轨迹幅值必须大于 0。"));
+            return;
+        }
+        if (config.sineAngularFrequency <= 0.0) {
+            appendLog(QStringLiteral("参数非法：正弦轨迹角频率必须大于 0。"));
+            return;
+        }
+    }
+
     {
         QMutexLocker locker(&sharedContext_.requestMutex);
         sharedContext_.motionRequest.config = config;
@@ -482,10 +661,12 @@ void MainWindow::onStartMotion()
     lastMotionRunning_ = false;
 
     hardwareThread_->enqueueCommand({HardwareCommand::Type::StartMotion, config});
-    appendLog(QStringLiteral("UI 已下发开始命令，mode=%1，系统规划周期=%2ms，UI显示周期=%3ms。")
+    appendLog(QStringLiteral("UI 已下发开始命令，mode=%1，轨迹=%2，系统规划周期=%3ms，UI 显示周期=%4ms，往复=%5。")
                   .arg(motionModeToString(config.mode))
+                  .arg(trajectoryShapeToString(config.trajectoryShape))
                   .arg(config.systemPlanningPeriodMs)
-                  .arg(systemConfig_.uiRefreshMs));
+                  .arg(systemConfig_.uiRefreshMs)
+                  .arg(config.reciprocating ? QStringLiteral("on") : QStringLiteral("off")));
 }
 
 void MainWindow::onStopMotion()

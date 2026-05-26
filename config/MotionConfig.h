@@ -10,6 +10,11 @@ enum class MotionMode {
     CSP
 };
 
+enum class TrajectoryShape {
+    Jog = 0,
+    Sine
+};
+
 // 上层结果向硬件线程交付时的三种典型形态。
 // 这层抽象描述的是“结果形态本身”，不是某个运动模式的专属定义。
 enum class PlanningOutputType {
@@ -34,6 +39,12 @@ inline constexpr qsizetype kMaxPvtsTablePoints = 5000;
 inline QString motionModeToString(MotionMode mode)
 {
     return mode == MotionMode::CSP ? QStringLiteral("CSP") : QStringLiteral("PVT");
+}
+
+inline QString trajectoryShapeToString(TrajectoryShape shape)
+{
+    return shape == TrajectoryShape::Sine ? QStringLiteral("Sine")
+                                          : QStringLiteral("Jog");
 }
 
 inline PlanningOutputType planningOutputTypeForMode(MotionMode mode)
@@ -65,9 +76,13 @@ inline PlannerWakePolicy plannerWakePolicyForMode(MotionMode mode)
 struct MotionConfig
 {
     MotionMode mode = MotionMode::PVT;
+    TrajectoryShape trajectoryShape = TrajectoryShape::Jog;
     quint16 axis = 0;
     double deltaDeg = 0.0;
     double durationS = 5.0;
+    double sineAmplitude = 30.0;
+    double sineAngularFrequency = 1.0;
+    bool reciprocating = false;
 
     // 系统规划周期：
     // - CSP：先按该周期生成粗点，再细化到 1ms 供硬件线程逐点消费

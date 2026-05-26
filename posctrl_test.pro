@@ -15,6 +15,7 @@ SOURCES += \
     mainwindow.cpp \
     planner/PlannerThread.cpp \
     planner/QuinticPlanner.cpp \
+    trace_slave_read_extract/runtime_trace_slave_reader.cpp \
     ui/UiRefreshController.cpp
 
 HEADERS += \
@@ -33,6 +34,7 @@ HEADERS += \
     planner/PlannerThread.h \
     planner/QuinticPlanner.h \
     planner/TrajectoryPlanner.h \
+    trace_slave_read_extract/runtime_trace_slave_reader.h \
     ui/UiRefreshController.h
 
 FORMS += \

@@ -2,6 +2,7 @@
 
 #include <QtMath>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 constexpr double kFineStepS = 0.001;
@@ -14,6 +15,7 @@ void QuinticPlanner::reset(const MotionConfig &config, qint64 sequenceId, qint32
     config_ = config;
     startPosRaw_ = startPosRaw;
     targetDeltaRaw_ = qRound(config.deltaDeg * config.rawPerDeg);
+    sineAmplitudeRaw_ = qRound(config.sineAmplitude * config.rawPerDeg);
     coarseSamples_.clear();
     cachedPoints_.clear();
     nextIndex_ = 0;
@@ -71,11 +73,28 @@ void QuinticPlanner::buildCoarseSamples()
     if (!coarseSamples_.isEmpty()) {
         coarseSamples_.last() = sampleCoarsePoint(durationS);
     }
+
+    if (!config_.reciprocating || coarseSamples_.size() <= 1) {
+        return;
+    }
+
+    QVector<CoarseSample> reciprocatingSamples;
+    reciprocatingSamples.reserve(coarseSamples_.size() * 2 - 1);
+    for (const CoarseSample &sample : coarseSamples_) {
+        reciprocatingSamples.push_back(sample);
+    }
+    for (int i = static_cast<int>(coarseSamples_.size()) - 2; i >= 0; --i) {
+        CoarseSample sample = coarseSamples_.at(i);
+        sample.timeS = durationS + (durationS - sample.timeS);
+        sample.velocityRaw = -sample.velocityRaw;
+        reciprocatingSamples.push_back(sample);
+    }
+    coarseSamples_ = reciprocatingSamples;
 }
 
 void QuinticPlanner::buildFineSamples()
 {
-    const double durationS = std::max(config_.durationS, kMinDurationS);
+    const double durationS = totalTrajectoryDurationS();
     const int fineCount = std::max(2, static_cast<int>(std::round(durationS / kFineStepS)) + 1);
 
     cachedPoints_.reserve(fineCount);
@@ -126,9 +145,24 @@ QuinticPlanner::CoarseSample QuinticPlanner::sampleCoarsePoint(double timeS) con
 {
     CoarseSample sample;
     sample.timeS = timeS;
-    sample.positionRaw = startPosRaw_ + targetDeltaRaw_ * samplePositionRatio(timeS);
-    sample.velocityRaw = sampleVelocityDeg(timeS) * config_.rawPerDeg;
+    if (config_.trajectoryShape == TrajectoryShape::Sine) {
+        const double phase = config_.sineAngularFrequency * timeS;
+        sample.positionRaw = startPosRaw_ + sineAmplitudeRaw_ * std::sin(phase);
+        sample.velocityRaw = sineAmplitudeRaw_ * config_.sineAngularFrequency * std::cos(phase);
+        return sample;
+    }
+
+    sample.positionRaw = startPosRaw_ + targetDeltaRaw_ * sampleJogPositionRatio(timeS);
+    sample.velocityRaw = sampleJogVelocity(timeS) * config_.rawPerDeg;
     return sample;
+}
+
+double QuinticPlanner::totalTrajectoryDurationS() const
+{
+    if (!coarseSamples_.isEmpty()) {
+        return std::max(coarseSamples_.last().timeS, kMinDurationS);
+    }
+    return std::max(config_.durationS, kMinDurationS);
 }
 
 TrajectoryPoint QuinticPlanner::interpolateFinePoint(double timeS, int coarseSegmentIndex) const
@@ -174,7 +208,7 @@ TrajectoryPoint QuinticPlanner::interpolateFinePoint(double timeS, int coarseSeg
     return point;
 }
 
-double QuinticPlanner::samplePositionRatio(double timeS) const
+double QuinticPlanner::sampleJogPositionRatio(double timeS) const
 {
     if (config_.durationS <= 0.0) {
         return 0.0;
@@ -184,7 +218,7 @@ double QuinticPlanner::samplePositionRatio(double timeS) const
     return 10.0 * qPow(tau, 3) - 15.0 * qPow(tau, 4) + 6.0 * qPow(tau, 5);
 }
 
-double QuinticPlanner::sampleVelocityDeg(double timeS) const
+double QuinticPlanner::sampleJogVelocity(double timeS) const
 {
     if (config_.durationS <= 0.0) {
         return 0.0;
